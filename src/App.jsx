@@ -401,8 +401,6 @@ function App() {
             <span>Breakdown Trigger Notification</span>
             {twilioLogsCount > 0 && <span className="twilio-alert-badge">{twilioLogsCount}</span>}
           </button>
-          <button className="button button-outline nav-desktop" onClick={() => scrollTo("schedule")}>View Schedule</button>
-          <button className="button button-dark nav-desktop" onClick={() => { scrollTo("events"); notify("Demo mode is active — factory data is simulated."); }}>Live Demo <ArrowUpRight size={15} /></button>
           <button className="icon-button menu-button" aria-label="Toggle navigation" onClick={() => setMobileNav(!mobileNav)}>{mobileNav ? <X /> : <Menu />}</button>
         </div>
       </header>
