@@ -148,20 +148,14 @@ export default function LiveMonitoringWidget() {
           <button
             className="live-cam-launcher-btn"
             onClick={handleOpen}
-            title="Open Live CCTV Monitoring Feed (Laptop Camera)"
-            aria-label="Open Live CCTV Monitoring Feed"
+            title="Open Live Camera Monitoring (Laptop Camera)"
+            aria-label="Open Live Camera Monitoring"
           >
             <div className="live-cam-pulse-ring" />
             <div className="live-cam-pulse-ring ring-delay" />
             <div className="live-cam-icon-box">
-              <Camera size={22} className="cam-main-icon" />
+              <Camera size={24} className="cam-main-icon" />
               <span className="live-rec-dot-pill" />
-            </div>
-            <div className="live-cam-launcher-label">
-              <span className="live-pill-tag">
-                <span className="blink-dot" /> LIVE FEED
-              </span>
-              <strong className="live-cam-title">CAM-01 Shopfloor</strong>
             </div>
           </button>
         </div>
@@ -177,7 +171,7 @@ export default function LiveMonitoringWidget() {
                 <span className="cctv-red-dot" />
                 <strong>REC</strong>
               </div>
-              <span className="cctv-cam-tag">CAM-01 · SHOPFLOOR A</span>
+              <span className="cctv-cam-tag">LIVE CAMERA FEED</span>
               <span className="cctv-badge-online">ONLINE</span>
             </div>
 

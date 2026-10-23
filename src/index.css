@@ -3046,13 +3046,14 @@
 }
 
 .live-cam-launcher-btn {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
   background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-  border: 1.5px solid #38bdf888;
-  border-radius: 999px;
-  padding: 8px 18px 8px 8px;
+  border: 2px solid #38bdf888;
+  border-radius: 50%;
+  padding: 0;
   cursor: pointer;
   box-shadow: 0 14px 35px rgba(15, 23, 42, 0.4), 0 0 20px rgba(56, 189, 248, 0.25);
   transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
@@ -3060,7 +3061,7 @@
 }
 
 .live-cam-launcher-btn:hover {
-  transform: translateY(-3px) scale(1.02);
+  transform: translateY(-3px) scale(1.06);
   border-color: #38bdf8;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.5), 0 0 28px rgba(56, 189, 248, 0.4);
 }
@@ -3102,10 +3103,7 @@
 
 .live-cam-pulse-ring {
   position: absolute;
-  left: 8px;
-  top: 8px;
-  width: 44px;
-  height: 44px;
+  inset: -3px;
   border-radius: 50%;
   border: 1.5px solid #38bdf8;
   opacity: 0;
@@ -3118,9 +3116,9 @@
 }
 
 @keyframes live-ring-pulse {
-  0% { transform: scale(0.9); opacity: 0.8; }
-  70% { transform: scale(1.6); opacity: 0; }
-  100% { transform: scale(1.7); opacity: 0; }
+  0% { transform: scale(0.95); opacity: 0.8; }
+  70% { transform: scale(1.5); opacity: 0; }
+  100% { transform: scale(1.6); opacity: 0; }
 }
 
 .live-cam-launcher-label {
