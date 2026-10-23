@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   TrendingUp, Cpu, Flame, Activity, Zap, AlertTriangle,
   CheckCircle2, Clock, Calendar, BarChart3, ShieldCheck,
@@ -6,150 +6,231 @@ import {
   Download, Sparkles, SlidersHorizontal, ChevronRight, Info
 } from "lucide-react";
 
-// 30-Day Historical Data per machine
-const machineHistoryData = {
-  "all": {
-    name: "All Factory Lines",
-    uptime: "93.4%",
-    totalHours: "3,241 hrs",
-    avgUtilization: "82.6%",
-    totalKwh: "14,820 kWh",
-    avgCostPerHour: "$4.12",
-    partsProduced: "24,210",
-    qualityYield: "98.9%",
-    co2Footprint: "5.8 tonnes",
-    powerTrend: "+2.1% vs prev 30d",
-  },
-  "CNC-01": {
-    name: "CNC Milling (CNC-01)",
+// Base machine profiles
+const MACHINES_CONFIG = [
+  {
+    id: "CNC-01",
+    name: "CNC Milling",
     role: "Gear housing & heavy engine casing",
-    uptime: "95.1%",
-    totalHours: "684 hrs",
-    avgUtilization: "87.4%",
-    totalKwh: "3,420 kWh",
+    baseLoad: 87.4,
+    baseKwhPerDay: 114,
+    baseHeat: 58.2,
+    baseVibration: 1.8,
+    basePartsPerDay: 160,
     powerFactor: "0.94",
-    avgHeat: "58.2°C",
-    vibrationRms: "1.8 mm/s",
-    partsProduced: "4,820",
     qualityYield: "99.2%",
     riskLevel: "Low",
     riskScore: 12,
-    failurePrediction: "Healthy · No maintenance required for ~18 days",
+    failurePrediction: "Healthy · Routine belt check in ~18 days",
   },
-  "CNC-02": {
-    name: "CNC Turning (CNC-02)",
+  {
+    id: "CNC-02",
+    name: "CNC Turning",
     role: "Drive shaft & axle turning line",
-    uptime: "85.0%",
-    totalHours: "612 hrs",
-    avgUtilization: "76.5%",
-    totalKwh: "4,110 kWh",
+    baseLoad: 76.5,
+    baseKwhPerDay: 137,
+    baseHeat: 78.4,
+    baseVibration: 5.4,
+    basePartsPerDay: 131,
     powerFactor: "0.88",
-    avgHeat: "78.4°C", // High heat!
-    vibrationRms: "5.4 mm/s", // High vibration!
-    partsProduced: "3,940",
     qualityYield: "97.4%",
     riskLevel: "Critical",
     riskScore: 78,
     failurePrediction: "⚠️ Impending Spindle Seizure in ~4.5 operating hours if thermal load continues",
   },
-  "DRILL-03": {
-    name: "Drilling Center (DRILL-03)",
+  {
+    id: "DRILL-03",
+    name: "Drilling Center",
     role: "Precision mounting plate & bolt tapping",
-    uptime: "97.9%",
-    totalHours: "705 hrs",
-    avgUtilization: "92.1%",
-    totalKwh: "2,240 kWh",
+    baseLoad: 92.1,
+    baseKwhPerDay: 75,
+    baseHeat: 52.6,
+    baseVibration: 1.2,
+    basePartsPerDay: 203,
     powerFactor: "0.96",
-    avgHeat: "52.6°C",
-    vibrationRms: "1.2 mm/s",
-    partsProduced: "6,100",
     qualityYield: "99.8%",
     riskLevel: "Optimal",
     riskScore: 8,
     failurePrediction: "Optimal condition · High spare capacity available for backup workload",
   },
-  "GRIND-04": {
-    name: "Grinding Station (GRIND-04)",
+  {
+    id: "GRIND-04",
+    name: "Grinding Station",
     role: "Gear tooth surface finish & mirror polish",
-    uptime: "91.2%",
-    totalHours: "580 hrs",
-    avgUtilization: "71.8%",
-    totalKwh: "2,890 kWh",
+    baseLoad: 71.8,
+    baseKwhPerDay: 96,
+    baseHeat: 64.8,
+    baseVibration: 2.9,
+    basePartsPerDay: 115,
     powerFactor: "0.92",
-    avgHeat: "64.8°C",
-    vibrationRms: "2.9 mm/s",
-    partsProduced: "3,450",
     qualityYield: "98.9%",
     riskLevel: "Moderate",
     riskScore: 24,
     failurePrediction: "Moderate wear on diamond dressing head · Recalibrate within 48h",
   },
-  "FINISH-05": {
-    name: "Finishing & Deburring (FINISH-05)",
+  {
+    id: "FINISH-05",
+    name: "Finishing & Deburring",
     role: "Edge deburr, ultrasonic wash & QC pack",
-    uptime: "96.4%",
-    totalHours: "660 hrs",
-    avgUtilization: "84.3%",
-    totalKwh: "2,160 kWh",
+    baseLoad: 84.3,
+    baseKwhPerDay: 72,
+    baseHeat: 46.1,
+    baseVibration: 0.9,
+    basePartsPerDay: 196,
     powerFactor: "0.95",
-    avgHeat: "46.1°C",
-    vibrationRms: "0.9 mm/s",
-    partsProduced: "5,900",
     qualityYield: "99.5%",
     riskLevel: "Low",
     riskScore: 10,
     failurePrediction: "Optimal condition · Minimal wear pattern detected",
   }
+];
+
+// Generate deterministic, realistic 30-day historical data per machine
+const generateHistoricalDataset = () => {
+  const dataset = {};
+
+  MACHINES_CONFIG.forEach(m => {
+    dataset[m.id] = [];
+    for (let day = 1; day <= 30; day++) {
+      // Small seasonal/shift variance
+      const variance = Math.sin(day * 0.7) * 4.5 + Math.cos(day * 1.3) * 2.5;
+      const load = Math.min(98, Math.max(68, Math.round((m.baseLoad + variance) * 10) / 10));
+      const kwh = Math.round(m.baseKwhPerDay * (load / m.baseLoad));
+      const parts = Math.round(m.basePartsPerDay * (load / m.baseLoad));
+      
+      // For CNC-02, progressive thermal increase in the last 12 days
+      let heat = m.baseHeat + (Math.sin(day * 0.5) * 2.2);
+      if (m.id === "CNC-02") {
+        if (day >= 18) {
+          heat += (day - 18) * 1.1; // spikes from 65°C up to 78.4°C
+        }
+      }
+      heat = Math.round(heat * 10) / 10;
+
+      const runtimeHrs = Math.round((21.5 * (load / 100) + 1.2) * 10) / 10;
+
+      dataset[m.id].push({
+        day,
+        date: `Day ${day}`,
+        load,
+        kwh,
+        heat,
+        parts,
+        runtimeHrs
+      });
+    }
+  });
+
+  // Calculate factory aggregate 'all'
+  dataset["all"] = [];
+  for (let day = 1; day <= 30; day++) {
+    let totalKwh = 0;
+    let totalParts = 0;
+    let totalRuntime = 0;
+    let totalLoad = 0;
+    let maxHeat = 0;
+
+    MACHINES_CONFIG.forEach(m => {
+      const entry = dataset[m.id][day - 1];
+      totalKwh += entry.kwh;
+      totalParts += entry.parts;
+      totalRuntime += entry.runtimeHrs;
+      totalLoad += entry.load;
+      if (entry.heat > maxHeat) maxHeat = entry.heat;
+    });
+
+    dataset["all"].push({
+      day,
+      date: `Day ${day}`,
+      load: Math.round((totalLoad / MACHINES_CONFIG.length) * 10) / 10,
+      kwh: totalKwh,
+      heat: maxHeat,
+      parts: totalParts,
+      runtimeHrs: Math.round(totalRuntime * 10) / 10
+    });
+  }
+
+  return dataset;
 };
 
-// 30-Day Daily Power Utilization Data Points (for realistic bar/spark representation)
-const thirtyDayTimeline = [
-  { day: 1, utilization: 84, kwh: 480, heat: 58 },
-  { day: 2, utilization: 86, kwh: 495, heat: 59 },
-  { day: 3, utilization: 82, kwh: 470, heat: 57 },
-  { day: 4, utilization: 88, kwh: 510, heat: 61 },
-  { day: 5, utilization: 91, kwh: 530, heat: 64 },
-  { day: 6, utilization: 79, kwh: 450, heat: 56 },
-  { day: 7, utilization: 75, kwh: 420, heat: 54 },
-  { day: 8, utilization: 85, kwh: 490, heat: 60 },
-  { day: 9, utilization: 87, kwh: 505, heat: 62 },
-  { day: 10, utilization: 89, kwh: 518, heat: 63 },
-  { day: 11, utilization: 92, kwh: 540, heat: 65 },
-  { day: 12, utilization: 90, kwh: 525, heat: 64 },
-  { day: 13, utilization: 81, kwh: 465, heat: 58 },
-  { day: 14, utilization: 76, kwh: 430, heat: 55 },
-  { day: 15, utilization: 88, kwh: 505, heat: 61 },
-  { day: 16, utilization: 89, kwh: 515, heat: 62 },
-  { day: 17, utilization: 93, kwh: 550, heat: 68 }, // Thermal spike
-  { day: 18, utilization: 94, kwh: 562, heat: 71 }, // Thermal spike
-  { day: 19, utilization: 88, kwh: 510, heat: 67 },
-  { day: 20, utilization: 85, kwh: 492, heat: 63 },
-  { day: 21, utilization: 78, kwh: 440, heat: 56 },
-  { day: 22, utilization: 87, kwh: 502, heat: 62 },
-  { day: 23, utilization: 89, kwh: 520, heat: 64 },
-  { day: 24, utilization: 91, kwh: 535, heat: 69 },
-  { day: 25, utilization: 95, kwh: 575, heat: 74 }, // Severe heat on CNC-02
-  { day: 26, utilization: 92, kwh: 548, heat: 73 },
-  { day: 27, utilization: 86, kwh: 498, heat: 65 },
-  { day: 28, utilization: 79, kwh: 450, heat: 58 },
-  { day: 29, utilization: 90, kwh: 528, heat: 76 },
-  { day: 30, utilization: 88, kwh: 512, heat: 78.4 }, // Today: High heat alert!
-];
+const fullHistoricalData = generateHistoricalDataset();
 
 export default function ReportAnalysisAiSection({ onRehealWorkload }) {
   const [activeTab, setActiveTab] = useState("report"); // 'report' | 'ai'
   const [selectedMachine, setSelectedMachine] = useState("all");
-  const [timeRange, setTimeRange] = useState("30d"); // '30d' | '14d' | '7d'
+  const [timeRange, setTimeRange] = useState("30d"); // '7d' | '14d' | '30d'
   const [isScanning, setIsScanning] = useState(false);
   const [scanCompleteNotice, setScanCompleteNotice] = useState(null);
 
-  const currentData = machineHistoryData[selectedMachine] || machineHistoryData["all"];
+  // Determine slice count based on selected timeRange
+  const dayCount = timeRange === "7d" ? 7 : timeRange === "14d" ? 14 : 30;
 
-  const filteredDays = timeRange === "7d"
-    ? thirtyDayTimeline.slice(23)
-    : timeRange === "14d"
-    ? thirtyDayTimeline.slice(16)
-    : thirtyDayTimeline;
+  // Sliced timeline for the currently selected machine
+  const activeMachineTimeline = useMemo(() => {
+    const list = fullHistoricalData[selectedMachine] || fullHistoricalData["all"];
+    return list.slice(30 - dayCount);
+  }, [selectedMachine, dayCount]);
+
+  // Aggregate KPIs for the selected timeframe and machine
+  const computedKpis = useMemo(() => {
+    let sumRuntime = 0;
+    let sumKwh = 0;
+    let sumParts = 0;
+    let sumLoad = 0;
+    let peakHeat = 0;
+
+    activeMachineTimeline.forEach(d => {
+      sumRuntime += d.runtimeHrs;
+      sumKwh += d.kwh;
+      sumParts += d.parts;
+      sumLoad += d.load;
+      if (d.heat > peakHeat) peakHeat = d.heat;
+    });
+
+    const avgLoad = Math.round((sumLoad / activeMachineTimeline.length) * 10) / 10;
+    // Theoretical maximum running hours
+    const maxTheoreticalHrs = selectedMachine === "all" ? dayCount * 24 * 5 : dayCount * 24;
+    const uptimePct = Math.min(99.4, Math.round((sumRuntime / (maxTheoreticalHrs * 0.92)) * 1000) / 10);
+
+    const mCfg = MACHINES_CONFIG.find(m => m.id === selectedMachine);
+
+    return {
+      totalHours: Math.round(sumRuntime).toLocaleString() + " hrs",
+      uptime: uptimePct.toFixed(1) + "%",
+      avgUtilization: avgLoad.toFixed(1) + "%",
+      totalKwh: sumKwh.toLocaleString() + " kWh",
+      partsProduced: sumParts.toLocaleString(),
+      peakHeat: peakHeat.toFixed(1) + "°C",
+      qualityYield: mCfg ? mCfg.qualityYield : "98.9%",
+      powerFactor: mCfg ? mCfg.powerFactor : "0.94 PF"
+    };
+  }, [activeMachineTimeline, selectedMachine, dayCount]);
+
+  // Matrix table per-machine summaries for the selected timeframe
+  const tableRows = useMemo(() => {
+    return MACHINES_CONFIG.map(m => {
+      const slice = fullHistoricalData[m.id].slice(30 - dayCount);
+      let runtime = 0;
+      let kwh = 0;
+      let loadSum = 0;
+      let maxTemp = 0;
+
+      slice.forEach(d => {
+        runtime += d.runtimeHrs;
+        kwh += d.kwh;
+        loadSum += d.load;
+        if (d.heat > maxTemp) maxTemp = d.heat;
+      });
+
+      return {
+        ...m,
+        runtimeStr: Math.round(runtime).toLocaleString() + " hrs",
+        kwhStr: kwh.toLocaleString() + " kWh",
+        avgLoadPct: (loadSum / slice.length).toFixed(1) + "%",
+        avgTempStr: maxTemp.toFixed(1) + "°C"
+      };
+    });
+  }, [dayCount]);
 
   // Simulate real-time AI Prediction scan
   const handleRunAiDiagnostic = () => {
@@ -160,9 +241,9 @@ export default function ReportAnalysisAiSection({ onRehealWorkload }) {
       setScanCompleteNotice({
         time: new Date().toLocaleTimeString(),
         confidence: "96.4%",
-        result: "Neural Inference completed across 48,200 time-series sensor points. CNC-02 Spindle Motor confirmed at 78% breakdown probability due to thermal gradient (+16.4°C over nominal baseline)."
+        result: `Neural Inference re-calculated across past ${dayCount} days of sensor points. CNC-02 Spindle Motor confirmed at 78% breakdown probability due to continuous thermal rise (+16.4°C over nominal threshold).`
       });
-    }, 1800);
+    }, 1500);
   };
 
   return (
@@ -175,7 +256,7 @@ export default function ReportAnalysisAiSection({ onRehealWorkload }) {
           </div>
           <h2>Report Analysis &amp; AI Prediction</h2>
           <p>
-            Past 30 days operational power utilization reports combined with LSTM AI predictive breakdown telemetry.
+            Past operational power utilization reports combined with LSTM AI predictive breakdown telemetry.
           </p>
         </div>
 
@@ -185,7 +266,7 @@ export default function ReportAnalysisAiSection({ onRehealWorkload }) {
             className={`analytics-tab-btn ${activeTab === "report" ? "active" : ""}`}
             onClick={() => setActiveTab("report")}
           >
-            <BarChart3 size={15} /> 30-Day Power &amp; Utilization Report
+            <BarChart3 size={15} /> Power &amp; Utilization Report
           </button>
           <button
             className={`analytics-tab-btn ${activeTab === "ai" ? "active" : ""}`}
@@ -200,7 +281,7 @@ export default function ReportAnalysisAiSection({ onRehealWorkload }) {
       {/* Filter Toolbar: Machine selector & Timeframe */}
       <div className="analytics-toolbar">
         <div className="toolbar-machines">
-          <span className="toolbar-label">Machine Scope:</span>
+          <span className="toolbar-label">Scope:</span>
           {[
             { id: "all", label: "All Lines" },
             { id: "CNC-01", label: "CNC-01 Milling" },
@@ -221,33 +302,37 @@ export default function ReportAnalysisAiSection({ onRehealWorkload }) {
 
         <div className="toolbar-timeframe">
           <span className="toolbar-label">Timeframe:</span>
-          {["7d", "14d", "30d"].map(t => (
+          {[
+            { id: "7d", label: "Last 7 Days" },
+            { id: "14d", label: "Last 14 Days" },
+            { id: "30d", label: "Last 30 Days" }
+          ].map(t => (
             <button
-              key={t}
-              className={`time-chip ${timeRange === t ? "active" : ""}`}
-              onClick={() => setTimeRange(t)}
+              key={t.id}
+              className={`time-chip ${timeRange === t.id ? "active" : ""}`}
+              onClick={() => setTimeRange(t.id)}
             >
-              Last {t.replace("d", " Days")}
+              {t.label}
             </button>
           ))}
         </div>
       </div>
 
       {/* ────────────────────────────────────────────────────────
-          TAB 1: 30-DAY REPORT ANALYSIS & POWER UTILIZATION
+          TAB 1: DYNAMIC REPORT ANALYSIS & POWER UTILIZATION
       ──────────────────────────────────────────────────────── */}
       {activeTab === "report" && (
         <div className="analytics-content-panel">
-          {/* Top 4 KPI Cards for the selected machine / all */}
+          {/* Top 4 Dynamic KPI Cards */}
           <div className="analytics-kpi-grid">
             <div className="an-card">
               <div className="an-card-top">
-                <span>Operational Uptime ({timeRange.replace("d", " Days")})</span>
+                <span>Operational Uptime ({dayCount} Days)</span>
                 <span className="an-icon green"><Activity size={16} /></span>
               </div>
-              <div className="an-value">{currentData.uptime}</div>
+              <div className="an-value">{computedKpis.uptime}</div>
               <div className="an-meta green">
-                <ArrowUpRight size={13} /> {currentData.totalHours} active execution
+                <ArrowUpRight size={13} /> {computedKpis.totalHours} active execution
               </div>
             </div>
 
@@ -256,9 +341,9 @@ export default function ReportAnalysisAiSection({ onRehealWorkload }) {
                 <span>Power Utilization</span>
                 <span className="an-icon amber"><Zap size={16} /></span>
               </div>
-              <div className="an-value">{currentData.avgUtilization}</div>
+              <div className="an-value">{computedKpis.avgUtilization}</div>
               <div className="an-meta amber">
-                {currentData.totalKwh} total electrical consumption
+                {computedKpis.totalKwh} electricity consumed
               </div>
             </div>
 
@@ -267,32 +352,37 @@ export default function ReportAnalysisAiSection({ onRehealWorkload }) {
                 <span>Parts Output</span>
                 <span className="an-icon blue"><Layers size={16} /></span>
               </div>
-              <div className="an-value">{currentData.partsProduced} <small>parts</small></div>
+              <div className="an-value">{computedKpis.partsProduced} <small>parts</small></div>
               <div className="an-meta green">
-                <ShieldCheck size={13} /> {currentData.qualityYield} Quality pass rate
+                <ShieldCheck size={13} /> {computedKpis.qualityYield} Quality pass rate
               </div>
             </div>
 
             <div className="an-card">
               <div className="an-card-top">
-                <span>Efficiency &amp; Footprint</span>
+                <span>Thermal &amp; Power Factor</span>
                 <span className="an-icon purple"><Gauge size={16} /></span>
               </div>
               <div className="an-value">
-                {selectedMachine === "all" ? "94.2%" : currentData.powerFactor ? `PF ${currentData.powerFactor}` : "0.94 PF"}
+                {selectedMachine === "all" ? "94.2% Eff" : computedKpis.powerFactor}
               </div>
               <div className="an-meta">
-                {selectedMachine === "all" ? "Optimal energy grade A+" : `Avg heat: ${currentData.avgHeat}`}
+                {selectedMachine === "all" ? "Peak plant temp: " + computedKpis.peakHeat : `Peak Temp: ${computedKpis.peakHeat}`}
               </div>
             </div>
           </div>
 
-          {/* Interactive Daily Power Draw & Utilization Chart */}
+          {/* Interactive Dynamic Daily Power Draw & Utilization Bar Chart */}
           <div className="panel chart-panel">
             <div className="chart-header">
               <div>
-                <h3>Daily Power Consumption &amp; Capacity Utilization ({timeRange.replace("d", " Days")})</h3>
-                <p>Telemetry recorded from digital power transducers and variable frequency drives (VFD).</p>
+                <h3>
+                  Daily Power Consumption &amp; Capacity Utilization (Last {dayCount} Days
+                  {selectedMachine !== "all" ? ` · ${selectedMachine}` : " · All Lines"})
+                </h3>
+                <p>
+                  Showing {dayCount} daily operational records. Hover over any bar to view exact daily kWh, load factor, and operating temperature.
+                </p>
               </div>
               <div className="chart-legend">
                 <span><i className="c-dot green" /> Nominal (&lt; 85%)</span>
@@ -301,25 +391,30 @@ export default function ReportAnalysisAiSection({ onRehealWorkload }) {
               </div>
             </div>
 
-            {/* Visual Bar Chart */}
+            {/* Visual Dynamic Bar Chart */}
             <div className="bar-chart-container">
-              {filteredDays.map((d) => {
-                const isHigh = d.utilization >= 92;
-                const isPeak = d.utilization >= 85 && d.utilization < 92;
+              {activeMachineTimeline.map((d) => {
+                const isHigh = d.load >= 92;
+                const isPeak = d.load >= 85 && d.load < 92;
                 const barColor = isHigh ? "var(--red)" : isPeak ? "var(--amber)" : "var(--green)";
 
                 return (
-                  <div key={d.day} className="chart-bar-col" title={`Day ${d.day}: ${d.utilization}% load, ${d.kwh} kWh, Heat: ${d.heat}°C`}>
+                  <div
+                    key={d.day}
+                    className="chart-bar-col"
+                    title={`Day ${d.day}: ${d.load}% load, ${d.kwh} kWh, Heat: ${d.heat}°C`}
+                  >
                     <div className="chart-tooltip">
                       <strong>Day {d.day}</strong>
-                      <span>Load: {d.utilization}%</span>
-                      <span>{d.kwh} kWh</span>
+                      <span>Load: {d.load}%</span>
+                      <span>Power: {d.kwh} kWh</span>
                       <span>Heat: {d.heat}°C</span>
+                      <span>Parts: {d.parts} pcs</span>
                     </div>
                     <div className="bar-track">
                       <div
                         className="bar-fill"
-                        style={{ height: `${d.utilization}%`, backgroundColor: barColor }}
+                        style={{ height: `${d.load}%`, backgroundColor: barColor }}
                       />
                     </div>
                     <span className="bar-day-lbl">D{d.day}</span>
@@ -329,14 +424,14 @@ export default function ReportAnalysisAiSection({ onRehealWorkload }) {
             </div>
           </div>
 
-          {/* Machine-by-Machine 30-Day Comparison Matrix Table */}
+          {/* Machine-by-Machine Dynamic Comparison Matrix Table */}
           <div className="panel matrix-panel">
             <div className="panel-heading">
               <div>
-                <h3>30-Day Machine Workload &amp; Power Summary Matrix</h3>
-                <p>Audited performance metrics for automobile parts production lines.</p>
+                <h3>Machine Workload &amp; Power Summary Matrix ({dayCount}-Day Audit)</h3>
+                <p>Audited performance metrics scaled dynamically to the selected {dayCount}-day window.</p>
               </div>
-              <span className="test-badge">MONTHLY AUDIT</span>
+              <span className="test-badge">{dayCount}-DAY AUDIT</span>
             </div>
 
             <div className="matrix-table-wrap">
@@ -345,44 +440,50 @@ export default function ReportAnalysisAiSection({ onRehealWorkload }) {
                   <tr>
                     <th>Machine</th>
                     <th>Primary Function</th>
-                    <th>30d Runtime</th>
+                    <th>Runtime ({dayCount}d)</th>
                     <th>Avg Load</th>
-                    <th>Total kWh</th>
-                    <th>Avg Temp</th>
+                    <th>Total kWh ({dayCount}d)</th>
+                    <th>Peak Temp</th>
                     <th>Quality Yield</th>
                     <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {["CNC-01", "CNC-02", "DRILL-03", "GRIND-04", "FINISH-05"].map((id) => {
-                    const m = machineHistoryData[id];
-                    const isHazard = id === "CNC-02";
+                  {tableRows.map((m) => {
+                    const isHazard = m.id === "CNC-02";
+                    const isFocused = selectedMachine === m.id;
                     return (
-                      <tr key={id} className={isHazard ? "row-hazard" : ""}>
+                      <tr
+                        key={m.id}
+                        className={`${isHazard ? "row-hazard" : ""} ${isFocused ? "row-selected-focus" : ""}`}
+                        onClick={() => setSelectedMachine(m.id)}
+                        style={{ cursor: "pointer" }}
+                        title={`Click to filter dashboard to ${m.name}`}
+                      >
                         <td>
-                          <strong>{id}</strong>
-                          <small>{m.name.split(" ")[0]}</small>
+                          <strong>{m.id}</strong>
+                          <small>{m.name}</small>
                         </td>
                         <td>{m.role}</td>
-                        <td><strong>{m.totalHours}</strong></td>
+                        <td><strong>{m.runtimeStr}</strong></td>
                         <td>
                           <div className="inline-progress">
-                            <span>{m.avgUtilization}</span>
+                            <span>{m.avgLoadPct}</span>
                             <div className="mini-prog-track">
                               <div
                                 className="mini-prog-fill"
                                 style={{
-                                  width: m.avgUtilization,
+                                  width: m.avgLoadPct,
                                   backgroundColor: isHazard ? "#ef4444" : "#22c55e"
                                 }}
                               />
                             </div>
                           </div>
                         </td>
-                        <td><strong>{m.totalKwh}</strong></td>
+                        <td><strong>{m.kwhStr}</strong></td>
                         <td>
                           <span className={`temp-badge ${isHazard ? "hot" : "cool"}`}>
-                            <Flame size={11} /> {m.avgHeat}
+                            <Flame size={11} /> {m.avgTempStr}
                           </span>
                         </td>
                         <td><span className="yield-tag">{m.qualityYield}</span></td>
@@ -415,7 +516,7 @@ export default function ReportAnalysisAiSection({ onRehealWorkload }) {
               </div>
               <h3>AI Failure Forecaster &amp; Thermal Degradation Model</h3>
               <p>
-                Continuous multi-variate telemetry analysis correlating past 30 days of power draw variance,
+                Continuous multi-variate telemetry analysis correlating past {dayCount} days of power draw variance,
                 spindle harmonic jitter, and thermal gradients to forecast equipment failure before downtime occurs.
               </p>
             </div>
