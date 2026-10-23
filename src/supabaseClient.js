@@ -7,8 +7,10 @@
 
 import { createClient } from "@supabase/supabase-js";
 
+// Supabase anon keys are PUBLIC by design - safe to commit (RLS policies enforce security)
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://atcyesfxwortpmigehwd.supabase.co";
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF0Y3llc2Z4d29ydHBtaWdlaHdkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI3NTYwOTMsImV4cCI6MjEwODMzMjA5M30.hdAdHN7lrnpwkatVAH9qzpRVb4EspR0zm47Ft6b71vQ";
 
 export const isSupabaseConfigured = Boolean(
   supabaseUrl &&
