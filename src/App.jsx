@@ -4,14 +4,15 @@ import DisruptionModal from "./DisruptionModals";
 import TwilioModal from "./TwilioModal";
 import LiveMonitoringWidget from "./LiveMonitoringWidget";
 import ReportAnalysisAiSection from "./ReportAnalysisAiSection";
+import LoginPage from "./LoginPage";
 import { sendTwilioNotification, getTwilioLogs } from "./TwilioService";
-import { updateMachineInDb } from "./supabaseClient";
+import { supabase, isSupabaseConfigured, updateMachineInDb } from "./supabaseClient";
 import {
   Activity, ArrowDownRight, ArrowRight, ArrowUpRight, Bell, Boxes, Check,
   ChevronDown, CircleHelp, Clock3, Cog, Factory, Gauge, Menu, PackageCheck,
   Play, Pause, RefreshCw, Settings2, ShieldAlert, Truck, Wrench, X, Zap,
   FastForward, HeartPulse, Sparkles, AlertTriangle, CheckCircle2, RotateCcw, Timer,
-  Flame, Bot, Smartphone, MessageSquare, Send
+  Flame, Bot, Smartphone, MessageSquare, Send, LogOut, User
 } from "lucide-react";
 
 const initialEvents = [
@@ -43,10 +44,66 @@ const baselineSchedule = [
 ];
 
 function App() {
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem("flexi_auth_user");
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+
   const [mobileNav, setMobileNav] = useState(false);
   const [machineHealthOpen, setMachineHealthOpen] = useState(false);
   const [selectedMachine, setSelectedMachine] = useState(null);
   const [healthDropdown, setHealthDropdown] = useState(false);
+
+  // Sync with Supabase Auth in case of OAuth redirect
+  useEffect(() => {
+    if (isSupabaseConfigured && supabase?.auth?.onAuthStateChange) {
+      const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+        if (session?.user) {
+          const userMeta = session.user.user_metadata || {};
+          const fullUser = {
+            id: session.user.id,
+            name: userMeta.full_name || userMeta.name || session.user.email?.split("@")[0] || "Google User",
+            email: session.user.email,
+            provider: "Google OAuth",
+            role: "Plant Systems Engineer",
+            avatar: userMeta.avatar_url || userMeta.picture || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80"
+          };
+          setCurrentUser(fullUser);
+          try {
+            localStorage.setItem("flexi_auth_user", JSON.stringify(fullUser));
+          } catch (e) {}
+        }
+      });
+      return () => {
+        authListener?.subscription?.unsubscribe();
+      };
+    }
+  }, []);
+
+  const handleLogin = (user) => {
+    setCurrentUser(user);
+    try {
+      localStorage.setItem("flexi_auth_user", JSON.stringify(user));
+    } catch (e) {
+      console.warn(e);
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    try {
+      localStorage.removeItem("flexi_auth_user");
+      if (isSupabaseConfigured && supabase?.auth?.signOut) {
+        supabase.auth.signOut().catch(() => {});
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+  };
 
   // Live schedule simulation state
   const [simRunning, setSimRunning] = useState(true);
@@ -363,6 +420,10 @@ function App() {
     return row;
   });
 
+  if (!currentUser) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+
   return (
     <div className="app-shell">
       <div className="topline" />
@@ -380,8 +441,34 @@ function App() {
           <button className="nav-link nav-link-ai" onClick={() => scrollTo("analytics")}>
             📊 Report &amp; AI Prediction
           </button>
+          {currentUser && (
+            <button className="nav-link nav-link-logout-mobile" onClick={handleLogout}>
+              <LogOut size={12} /> Log Out ({currentUser.name})
+            </button>
+          )}
         </nav>
         <div className="nav-actions">
+          {currentUser && (
+            <div className="nav-user-badge">
+              <img
+                src={currentUser.avatar || "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=80&q=80"}
+                alt={currentUser.name}
+                className="nav-user-avatar"
+              />
+              <div className="nav-user-info">
+                <span className="nav-user-name">{currentUser.name}</span>
+                <span className="nav-user-role">{currentUser.role || "Operator"}</span>
+              </div>
+              <button
+                className="nav-logout-btn"
+                onClick={handleLogout}
+                title="Log out and return to Login Screen"
+              >
+                <LogOut size={12} />
+                <span>Log Out</span>
+              </button>
+            </div>
+          )}
           <button
             className="nav-link-twilio"
             onClick={() => setTwilioModalOpen(true)}
