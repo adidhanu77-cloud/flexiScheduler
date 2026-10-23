@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import MachineDashboard from "./MachineDashboard";
 import DisruptionModal from "./DisruptionModals";
 import TwilioModal from "./TwilioModal";
+import LiveMonitoringWidget from "./LiveMonitoringWidget";
 import { sendTwilioNotification, getTwilioLogs } from "./TwilioService";
 import { updateMachineInDb } from "./supabaseClient";
 import {
@@ -1005,6 +1006,7 @@ function App() {
         <div className="modal-disclaimer">This frontend is a prototype. The current interactions use sample data and do not yet run a real optimization algorithm or connect to factory sensors.</div>
         <button className="button button-dark full-button" onClick={() => { setModal(false); scrollTo("events"); }}>Try a disruption <ArrowRight size={15} /></button>
       </div></div>}
+      <LiveMonitoringWidget />
       {toast && <div className="toast"><Check size={17} />{toast}</div>}
     </div>
   );
