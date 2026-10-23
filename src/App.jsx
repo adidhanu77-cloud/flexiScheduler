@@ -1,8 +1,15 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import MachineDashboard from "./MachineDashboard";
+import DisruptionModal from "./DisruptionModals";
+import TwilioModal from "./TwilioModal";
+import { sendTwilioNotification, getTwilioLogs } from "./TwilioService";
+import { updateMachineInDb } from "./supabaseClient";
 import {
   Activity, ArrowDownRight, ArrowRight, ArrowUpRight, Bell, Boxes, Check,
   ChevronDown, CircleHelp, Clock3, Cog, Factory, Gauge, Menu, PackageCheck,
-  Play, RefreshCw, Settings2, ShieldAlert, Truck, Wrench, X, Zap
+  Play, Pause, RefreshCw, Settings2, ShieldAlert, Truck, Wrench, X, Zap,
+  FastForward, HeartPulse, Sparkles, AlertTriangle, CheckCircle2, RotateCcw, Timer,
+  Flame, Bot, Smartphone, MessageSquare, Send
 } from "lucide-react";
 
 const initialEvents = [
@@ -25,16 +32,36 @@ const inventoryItems = [
   { name: "Bearing set", sku: "CMP-1028", category: "Components", quantity: 214, unit: "sets", minimum: 80 },
 ];
 
-const scheduleRows = [
+const baselineSchedule = [
   { machine: "CNC-01", tasks: [{ left: 1, width: 23, label: "Gear blank", tone: "blue" }, { left: 26, width: 19, label: "Shaft", tone: "coral" }, { left: 47, width: 28, label: "Bracket", tone: "green" }] },
   { machine: "CNC-02", tasks: [{ left: 8, width: 30, label: "Shaft turning", tone: "purple" }, { left: 41, width: 22, label: "Gear teeth", tone: "amber" }, { left: 66, width: 26, label: "Inspection", tone: "cyan" }] },
-  { machine: "DRILL-03", tasks: [{ left: 1, width: 23, label: "Bolt holes", tone: "coral" }, { left: 26, width: 30, label: "Mounting plate", tone: "green" }, { left: 60, width: 25, label: "Final drill", tone: "purple" }] },
+  { machine: "DRILL-03", tasks: [{ left: 1, width: 23, label: "Bolt holes", tone: "coral" }, { left: 26, width: 27, label: "Mounting plate (Done early)", tone: "green", isQuotaDone: true }] },
   { machine: "GRIND-04", tasks: [{ left: 1, width: 24, label: "Surface grind", tone: "amber" }, { left: 28, width: 26, label: "Gear finish", tone: "blue" }, { left: 58, width: 29, label: "QC check", tone: "cyan" }] },
   { machine: "FINISH-05", tasks: [{ left: 2, width: 23, label: "Deburr", tone: "green" }, { left: 29, width: 27, label: "Polish", tone: "cyan" }, { left: 60, width: 30, label: "Pack batch", tone: "coral" }] },
 ];
 
 function App() {
   const [mobileNav, setMobileNav] = useState(false);
+  const [machineHealthOpen, setMachineHealthOpen] = useState(false);
+  const [selectedMachine, setSelectedMachine] = useState(null);
+  const [healthDropdown, setHealthDropdown] = useState(false);
+
+  // Live schedule simulation state
+  const [simRunning, setSimRunning] = useState(true);
+  const [simSpeed, setSimSpeed] = useState(1);
+  const [simProgress, setSimProgress] = useState(44); // 0 to 100% of Shift A (08:00 - 16:00)
+  const [healingState, setHealingState] = useState("idle"); // "idle" | "healing" | "healed"
+
+  // Demonstration breakdown switches (both Manual and Automatic)
+  const [autoBreakdown, setAutoBreakdown] = useState(false);
+  const [breakdownTriggerType, setBreakdownTriggerType] = useState("manual"); // "manual" | "automatic"
+
+  const openMachine = (machineName) => {
+    setSelectedMachine(machineName);
+    setMachineHealthOpen(true);
+    setMobileNav(false);
+    setHealthDropdown(false);
+  };
   const [dashboardTab, setDashboardTab] = useState("alerts");
   const [breakdown, setBreakdown] = useState(false);
   const [rush, setRush] = useState(false);
@@ -42,7 +69,62 @@ function App() {
   const [events, setEvents] = useState(initialEvents);
   const [notice, setNotice] = useState("Select a scenario to test how the virtual factory responds. This prototype uses simulated data.");
   const [modal, setModal] = useState(false);
+  const [activeDisruptionModal, setActiveDisruptionModal] = useState(null); // "rush" | "breakdown" | "material" | null
   const [toast, setToast] = useState("");
+  const [twilioModalOpen, setTwilioModalOpen] = useState(false);
+  const [twilioLogsCount, setTwilioLogsCount] = useState(() => getTwilioLogs().length);
+  const [alertDispatching, setAlertDispatching] = useState(false);
+
+  const dispatchBreakdownAlert = async (sourceType = "manual") => {
+    setAlertDispatching(true);
+    notify("📱 Dispatching Breakdown Trigger Notification (WhatsApp & SMS)...");
+    const res = await sendTwilioNotification({
+      title: sourceType === "automatic"
+        ? "Automatic Sensor Breakdown Alert"
+        : "Manual Breakdown Alert Dispatched",
+      message: "Critical Spindle Motor Jammed on CNC-02 at 12:10 PM. Needy tasks flagged. Digital Twin recommends reassignment to completed machine DRILL-03.",
+      triggerType: sourceType,
+      machineId: "CNC-02",
+      fault: "Spindle Jam (Overheat 114°C)"
+    });
+    setAlertDispatching(false);
+    setTwilioLogsCount(getTwilioLogs().length);
+    addEvent(
+      `Breakdown Notification (${sourceType.toUpperCase()}): CNC-02`,
+      "Real-time incident report sent via WhatsApp and SMS.",
+      Smartphone,
+      "red"
+    );
+    notify("✅ BREAKDOWN TRIGGER NOTIFICATION: WhatsApp & SMS sent successfully!");
+    return res;
+  };
+
+  // Live simulation ticker + Automatic mid-shift breakdown sensor trigger
+  useEffect(() => {
+    if (!simRunning) return;
+    const interval = setInterval(() => {
+      setSimProgress(prev => {
+        const next = prev + (0.09 * simSpeed);
+        // Automatic breakdown triggers at 52% (12:10 PM) if auto-breakdown switch is ON
+        if (autoBreakdown && !breakdown && prev < 52 && next >= 52) {
+          setBreakdown(true);
+          setBreakdownTriggerType("automatic");
+          setHealingState("idle");
+          addEvent(
+            "⚡ Automatic Sensor Breakdown: CNC-02",
+            "Automatic sensor trip at 12:10 PM: Spindle motor overheat on CNC-02. Digital Twin identified DRILL-03 (finished early at 11:45 AM) to absorb needy work.",
+            AlertTriangle,
+            "red"
+          );
+          notify("⚡ AUTOMATIC BREAKDOWN DETECTED: CNC-02 spindle seized at 12:10 PM! Ready to reassign to completed machine DRILL-03.");
+          dispatchBreakdownAlert("automatic");
+        }
+        if (next >= 100) return 0;
+        return parseFloat(next.toFixed(2));
+      });
+    }, 250);
+    return () => clearInterval(interval);
+  }, [simRunning, simSpeed, autoBreakdown, breakdown]);
 
   const addEvent = (title, desc, icon, tone = "orange") => {
     const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -50,17 +132,57 @@ function App() {
   };
   const notify = (message) => {
     setToast(message);
-    window.setTimeout(() => setToast(""), 3200);
+    window.setTimeout(() => setToast(""), 3500);
   };
+
+  // Manual Breakdown Switch for presentation demonstration
+  const toggleManualBreakdown = () => {
+    if (!breakdown) {
+      setBreakdown(true);
+      setBreakdownTriggerType("manual");
+      setHealingState("idle");
+      updateMachineInDb("CNC-02", { status: "breakdown", health: 18, reassigned_to: null }).catch(e => console.warn(e));
+      addEvent(
+        "Manual Breakdown Switch Flipped",
+        "Admin triggered manual breakdown on CNC-02. Needy tasks flagged for reassignment to completed machine DRILL-03.",
+        Flame,
+        "red"
+      );
+      notify("🚨 MANUAL BREAKDOWN SWITCH: CNC-02 failed! Needy tasks ready for reassignment to completed machine DRILL-03.");
+    } else {
+      restoreCNC02();
+    }
+  };
+
+  // Rehealing & AI Auto-reallocation handler: Reassigns needy work to completed machine (DRILL-03)
+  const triggerReheal = () => {
+    setHealingState("healing");
+    updateMachineInDb("CNC-02", { status: "healing", reassigned_to: "DRILL-03" }).catch(e => console.warn(e));
+    notify("🤖 Digital Twin AI: DRILL-03 has completed 100% of morning operations! Reassigning CNC-02 needy workload to DRILL-03...");
+    window.setTimeout(() => {
+      setHealingState("healed");
+      updateMachineInDb("CNC-02", { status: "healed", health: 88, reassigned_to: "DRILL-03" }).catch(e => console.warn(e));
+      addEvent(
+        "Workload Reassigned to DRILL-03",
+        "Needy tasks from broken CNC-02 successfully absorbed by completed machine DRILL-03 (Radial Drill Center). Zero schedule delay!",
+        Sparkles,
+        "green"
+      );
+      notify("✨ WORKLOAD REASSIGNED: Completed machine DRILL-03 has taken over CNC-02's jobs! Factory operating at 100%.");
+    }, 1500);
+  };
+
+  const restoreCNC02 = () => {
+    setBreakdown(false);
+    setHealingState("idle");
+    updateMachineInDb("CNC-02", { status: "running", health: 91, reassigned_to: null }).catch(e => console.warn(e));
+    addEvent("CNC-02 Restored", "Maintenance completed; machine returned to standard operational schedule.", Check, "green");
+    notify("CNC-02 fully repaired and restored to baseline.");
+  };
+
   const simulate = (type) => {
     if (type === "breakdown") {
-      const next = !breakdown;
-      setBreakdown(next);
-      setNotice(next
-        ? "Recovery plan active: CNC-02 is unavailable. Affected shaft operations are flagged for reassignment. Estimated makespan: 20.1 h."
-        : "CNC-02 restored. The schedule has returned to the default demo state.");
-      addEvent(next ? "CNC-02 breakdown detected" : "CNC-02 restored", next ? "Affected shaft operations flagged for reassignment." : "Machine status returned to operational.", next ? ShieldAlert : Check, next ? "red" : "green");
-      notify(next ? "Breakdown simulated. Factory entered recovery mode." : "Machine restored in the demo.");
+      toggleManualBreakdown();
     }
     if (type === "rush") {
       const next = !rush;
@@ -81,16 +203,163 @@ function App() {
       notify(next ? "Material delay simulated. Dependent jobs flagged." : "Material availability restored.");
     }
   };
+
   const reset = () => {
-    setBreakdown(false); setRush(false); setMaterialDelay(false);
+    setBreakdown(false);
+    setHealingState("idle");
+    setRush(false);
+    setMaterialDelay(false);
+    setSimProgress(44);
+    setSimRunning(true);
+    setSimSpeed(1);
+    setAutoBreakdown(false);
     setNotice("Select a scenario to test how the virtual factory responds. This prototype uses simulated data.");
     addEvent("Simulation reset", "Factory demo restored to baseline state.", RefreshCw, "blue");
-    notify("Factory simulation reset.");
+    notify("Factory simulation reset to initial shift state.");
   };
+
   const scrollTo = (id) => {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
     setMobileNav(false);
   };
+
+  // Format the simulated clock time (08:00 - 16:00 Shift A)
+  const formatSimClock = (progress) => {
+    const totalMin = 8 * 60 + (progress / 100) * 480;
+    const h = Math.floor(totalMin / 60);
+    const m = Math.floor(totalMin % 60);
+    const s = Math.floor(((totalMin % 1) * 60));
+    const ampm = h >= 12 ? "PM" : "AM";
+    const dispH = h % 12 === 0 ? 12 : h % 12;
+    return `${dispH.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")} ${ampm}`;
+  };
+
+  // Dynamic Live Time Estimation of Completion (ETC) for each machine
+  const getMachineETC = (machineId, progress, isDown, healState) => {
+    const currentDayMin = 8 * 60 + (progress / 100) * 480;
+    const targets = {
+      "CNC-01": 16 * 60 + 45, // 16:45
+      "CNC-02": 17 * 60 + 15, // 17:15
+      "DRILL-03": 12 * 60 + 15, // 12:15 (Completed early at 53%!)
+      "GRIND-04": 18 * 60,      // 18:00
+    };
+
+    let targetMin = targets[machineId] || 16 * 60;
+    let note = "On track";
+    let isPaused = false;
+    let isAssisting = false;
+    let isHealing = false;
+    let isCompletedEarly = false;
+
+    if (machineId === "CNC-02") {
+      if (isDown && healState === "idle") {
+        return {
+          targetTime: "Delayed",
+          remainingStr: "PAUSED (+2.5h delay)",
+          percent: Math.min(100, Math.round((progress / 100) * 65)),
+          isPaused: true,
+          note: "🚨 Spindle Seized · Needy Machine"
+        };
+      }
+      if (isDown && healState === "healing") {
+        return {
+          targetTime: "Rerouting...",
+          remainingStr: "Reassigning to DRILL-03...",
+          percent: 65,
+          isHealing: true,
+          note: "Reallocating to completed machine"
+        };
+      }
+      if (isDown && healState === "healed") {
+        return {
+          targetTime: "16:15",
+          remainingStr: "00h 14m 30s (Diagnostic)",
+          percent: 94,
+          isHealing: true,
+          note: "Workload transferred to DRILL-03"
+        };
+      }
+    }
+
+    if (machineId === "DRILL-03") {
+      if (isDown && healState === "healed") {
+        targetMin = 16 * 60 + 30; // Absorbed extra workload
+        isAssisting = true;
+        note = "⚡ Absorbed CNC-02 Needy Work (+2.2h)";
+      } else if (progress >= 53) {
+        isCompletedEarly = true;
+        return {
+          targetTime: "12:15",
+          remainingStr: "00h 00m (Done)",
+          percent: 100,
+          isCompletedEarly: true,
+          note: "✅ Shift Work 100% Completed"
+        };
+      }
+    }
+
+    const remMin = Math.max(0, targetMin - currentDayMin);
+    const remH = Math.floor(remMin / 60);
+    const remM = Math.floor(remMin % 60);
+    const remS = Math.floor((remMin % 1) * 60);
+
+    const targetH = Math.floor(targetMin / 60);
+    const targetM = Math.floor(targetMin % 60);
+    const targetStr = `${targetH.toString().padStart(2, "0")}:${targetM.toString().padStart(2, "0")}`;
+
+    const totalJobSpan = targetMin - (8 * 60);
+    const elapsedJob = Math.max(0, currentDayMin - (8 * 60));
+    const pct = Math.min(100, Math.round((elapsedJob / totalJobSpan) * 100));
+
+    return {
+      targetTime: targetStr,
+      remainingStr: `${remH}h ${remM.toString().padStart(2, "0")}m ${remS.toString().padStart(2, "0")}s`,
+      percent: pct,
+      isPaused,
+      isAssisting,
+      isCompletedEarly,
+      note
+    };
+  };
+
+  // Generate dynamic schedule rows (adjusts when rehealed/reallocated to completed machine)
+  const scheduleRows = baselineSchedule.map(row => {
+    if (row.machine === "DRILL-03") {
+      if (breakdown && healingState === "healed") {
+        return {
+          ...row,
+          tasks: [
+            { left: 1, width: 23, label: "Bolt holes", tone: "coral" },
+            { left: 26, width: 27, label: "Mounting plate (Finished 100%)", tone: "green", isQuotaDone: true },
+            { left: 56, width: 38, label: "⚡ Reassigned: CNC-02 Shaft Turning & Teeth", tone: "purple", isRerouted: true }
+          ]
+        };
+      }
+    }
+    if (row.machine === "CNC-02") {
+      if (breakdown && healingState === "idle") {
+        return {
+          ...row,
+          tasks: [
+            { left: 8, width: 30, label: "Shaft turning", tone: "purple" },
+            { left: 41, width: 14, label: "🚨 SPINDLE JAM", tone: "red", isFailed: true },
+            { left: 56, width: 36, label: "Needy Work Stalled", tone: "purple", isTransferred: true }
+          ]
+        };
+      }
+      if (breakdown && healingState === "healed") {
+        return {
+          ...row,
+          tasks: [
+            { left: 8, width: 30, label: "Shaft turning", tone: "purple" },
+            { left: 41, width: 33, label: "Transferred → DRILL-03 (Completed Machine)", tone: "purple", isTransferred: true },
+            { left: 75, width: 23, label: "🔧 Auto-Healing Diagnostic", tone: "amber", isHealing: true }
+          ]
+        };
+      }
+    }
+    return row;
+  });
 
   return (
     <div className="app-shell">
@@ -106,8 +375,32 @@ function App() {
           <button className="nav-link" onClick={() => { setDashboardTab("alerts"); scrollTo("dashboard"); }}>Alerts</button>
           <button className="nav-link" onClick={() => { setDashboardTab("inventory"); scrollTo("dashboard"); }}>Inventory</button>
           <button className="nav-link" onClick={() => scrollTo("events")}>Disruptions</button>
+          <div className="nav-dropdown-wrap" onMouseEnter={() => setHealthDropdown(true)} onMouseLeave={() => setHealthDropdown(false)}>
+            <button className={`nav-link nav-link-health ${healthDropdown ? "active" : ""}`}>
+              ⚙ Machine Health <span className="nav-chevron">{healthDropdown ? "▲" : "▼"}</span>
+            </button>
+            {healthDropdown && (
+              <div className="nav-dropdown">
+                <div className="nav-dropdown-label">SELECT MACHINE</div>
+                {["CNC Milling","CNC Turning","Drilling","Grinding"].map(name => (
+                  <button key={name} className="nav-dropdown-item" onClick={() => openMachine(name)}>
+                    <span className="nav-dropdown-dot" />{name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </nav>
         <div className="nav-actions">
+          <button
+            className="nav-link-twilio"
+            onClick={() => setTwilioModalOpen(true)}
+            title="Open Breakdown Trigger Notification (WhatsApp & SMS)"
+          >
+            <MessageSquare size={13} />
+            <span>Breakdown Trigger Notification</span>
+            {twilioLogsCount > 0 && <span className="twilio-alert-badge">{twilioLogsCount}</span>}
+          </button>
           <button className="button button-outline nav-desktop" onClick={() => scrollTo("schedule")}>View Schedule</button>
           <button className="button button-dark nav-desktop" onClick={() => { scrollTo("events"); notify("Demo mode is active — factory data is simulated."); }}>Live Demo <ArrowUpRight size={15} /></button>
           <button className="icon-button menu-button" aria-label="Toggle navigation" onClick={() => setMobileNav(!mobileNav)}>{mobileNav ? <X /> : <Menu />}</button>
@@ -200,39 +493,429 @@ function App() {
 
         <section className="section control-section" id="schedule">
           <div className="section-heading">
-            <div><div className="eyebrow"><span /> PLAN · TRACK · ADAPT</div><h2>Production control center</h2><p>Machine assignments, job timelines, and current factory state.</p></div>
-            <button className="button button-outline reset-button" onClick={reset}><RefreshCw size={15} /> Reset simulation</button>
+            <div>
+              <div className="eyebrow"><span /> PLAN · TRACK · ADAPT</div>
+              <h2>Production control center</h2>
+              <p>Machine assignments, job timelines, and current factory state.</p>
+            </div>
+            <div className="control-header-actions">
+              <div className="sim-live-badge"><span className={`live-pulse-dot ${simRunning ? "active" : ""}`} /> {simRunning ? "LIVE SCHEDULE RUNNING" : "SIMULATION PAUSED"}</div>
+              <button className="button button-outline reset-button" onClick={reset}><RefreshCw size={15} /> Reset simulation</button>
+            </div>
           </div>
+
           <div className="main-grid">
             <div className="panel schedule-panel">
-              <div className="panel-heading"><div><h3>Machine schedule</h3><p>Production timeline by machine</p></div><span className="shift-badge">SHIFT A · 08:00–16:00</span></div>
-              <div className="legend"><span><i className="dot blue" /> Gear assembly</span><span><i className="dot coral" /> Shaft machining</span><span><i className="dot green" /> Bracket finishing</span><span><i className="dot amber" /> Inspection</span></div>
-              <div className="gantt-scroll"><div className="gantt">
-                <div className="time-axis"><span>Machine</span>{["08:00","09:00","10:00","11:00","12:00","13:00","14:00","15:00"].map(t => <span key={t}>{t}</span>)}</div>
-                {scheduleRows.map((row, idx) => <div className={`machine-row ${breakdown && row.machine === "CNC-02" ? "machine-broken" : ""}`} key={row.machine}>
-                  <div className="machine-label">{row.machine}<small>{idx === 0 ? "Milling" : idx === 1 ? "Turning" : idx === 2 ? "Drilling" : idx === 3 ? "Grinding" : "Finishing"}</small></div>
-                  <div className="timeline-track">{row.tasks.map((task, i) => <div key={i} className={`task task-${task.tone}`} style={{ left: `${task.left}%`, width: `${task.width}%` }}>{task.label}</div>)}{breakdown && row.machine === "CNC-02" && <div className="broken-label">BREAKDOWN</div>}</div>
-                </div>)}
-              </div></div>
-              <div className="progress-meta"><span>Shift completion</span><strong>{breakdown ? "62%" : rush ? "74%" : "78%"}</strong></div>
-              <div className="progress-track"><span style={{ width: breakdown ? "62%" : rush ? "74%" : "78%" }} /></div>
-              {(rush || materialDelay || breakdown) && <div className="schedule-alert"><ShieldAlert size={16} /><span><strong>Schedule update:</strong> {breakdown ? "CNC-02 unavailable; affected operations need reassignment." : rush ? "Urgent order added to the production queue." : "Material-dependent shaft operations are on hold."}</span></div>}
+              {/* Admin Live Simulation Controls Bar with Manual & Automatic Breakdown Demonstration Switches */}
+              <div className="admin-sim-toolbar">
+                <div className="ast-left">
+                  <button
+                    className={`sim-play-btn ${simRunning ? "running" : "paused"}`}
+                    onClick={() => setSimRunning(!simRunning)}
+                    title={simRunning ? "Pause schedule execution" : "Run live schedule"}
+                  >
+                    {simRunning ? <Pause size={13} /> : <Play size={13} />}
+                    <span>{simRunning ? "Pause" : "Run"}</span>
+                  </button>
+
+                  <div className="sim-speed-selector">
+                    <span className="speed-lbl">Speed:</span>
+                    {[1, 2, 5].map(s => (
+                      <button
+                        key={s}
+                        className={`speed-pill ${simSpeed === s ? "active" : ""}`}
+                        onClick={() => setSimSpeed(s)}
+                      >
+                        {s}x
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Demonstration Switches: Manual Breakdown Switch & Automatic Breakdown Toggle */}
+                  <div className="demo-switch-group">
+                    <button
+                      className={`demo-switch-btn manual-btn ${breakdown ? "active-hazard" : ""}`}
+                      onClick={toggleManualBreakdown}
+                      title="Flip manual breakdown switch on CNC-02 for live demonstration"
+                    >
+                      <Flame size={12} className={breakdown ? "flame-active" : ""} />
+                      <span>{breakdown ? "🚨 Manual Breakdown: ON" : "⚡ Manual Breakdown Switch"}</span>
+                    </button>
+
+                    <button
+                      className={`demo-switch-btn auto-btn ${autoBreakdown ? "active-auto" : ""}`}
+                      onClick={() => {
+                        const next = !autoBreakdown;
+                        setAutoBreakdown(next);
+                        notify(next ? "🤖 Auto-Breakdown ENABLED: Will trigger automatically at 52% (12:10 PM) mid-shift!" : "Auto-Breakdown disabled.");
+                      }}
+                      title="Toggle automatic mid-shift breakdown sensor trigger at 52% / 12:10 PM"
+                    >
+                      <Bot size={12} />
+                      <span>Auto-Breakdown: {autoBreakdown ? "ON (@ 52%)" : "OFF"}</span>
+                    </button>
+
+                    {breakdown && (
+                      <button
+                        className="manual-alert-dispatch-btn"
+                        onClick={() => dispatchBreakdownAlert("manual")}
+                        title="Click to broadcast real-time breakdown alert via Twilio WhatsApp & SMS"
+                      >
+                        <Bell size={12} />
+                        <span>{alertDispatching ? "Alerting..." : "🚨 Send Alert (WhatsApp & SMS)"}</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="ast-right">
+                  <div className="sim-digital-clock">
+                    <Clock3 size={13} className="clock-icon" />
+                    <span className="clock-time">{formatSimClock(simProgress)}</span>
+                    <span className="clock-shift">Shift A · {Math.round(simProgress)}% Done</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Breakdown Alert & Self-Healing Bar */}
+              {breakdown && healingState === "idle" && (
+                <div className="schedule-healing-alert red">
+                  <div className="sha-info">
+                    <AlertTriangle size={18} className="alert-icon" />
+                    <div>
+                      <strong>
+                        {breakdownTriggerType === "automatic"
+                          ? "⚡ AUTOMATIC SENSOR DETECTED: CNC-02 Spindle Motor Jammed at 12:10 PM!"
+                          : "🚨 MANUAL BREAKDOWN SWITCH TRIGGERED: CNC-02 Simulated Failure Active!"}
+                      </strong>
+                      <p>
+                        Needy operations stalled. Completed machine <strong>DRILL-03</strong> finished its shift work early (100% done at 11:45 AM) with open capacity!
+                      </p>
+                    </div>
+                  </div>
+                  <div className="sha-actions-group" style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+                    <button
+                      className="banner-alert-dispatch-btn"
+                      onClick={() => dispatchBreakdownAlert("manual")}
+                      title="Dispatch real-time Twilio WhatsApp & SMS alert to maintenance team"
+                    >
+                      <Send size={13} /> {alertDispatching ? "Sending..." : "🚨 Send Twilio Alert (WhatsApp & SMS)"}
+                    </button>
+                    <button className="reheal-btn pulse-glow" onClick={triggerReheal}>
+                      <Sparkles size={14} /> Reassign Needy Work to Completed Machine (DRILL-03)
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {breakdown && healingState === "healing" && (
+                <div className="schedule-healing-alert blue">
+                  <div className="sha-info">
+                    <RotateCcw size={18} className="spin-icon" />
+                    <div>
+                      <strong>Digital Twin AI: Reassigning Work to Completed Machine...</strong>
+                      <p>Target Machine: DRILL-03 (Tasks 100% Completed) → Absorbing CNC-02 Shaft Turning &amp; Gear Teeth...</p>
+                    </div>
+                  </div>
+                  <span className="healing-badge">Rerouting Workload...</span>
+                </div>
+              )}
+
+              {breakdown && healingState === "healed" && (
+                <div className="schedule-healing-alert green">
+                  <div className="sha-info">
+                    <CheckCircle2 size={18} className="check-icon" />
+                    <div>
+                      <strong>Reallocation Complete: Completed Machine DRILL-03 has absorbed CNC-02's jobs!</strong>
+                      <p>DRILL-03 completed its quota early and absorbed the needy workload. Zero shift downtime. CNC-02 undergoing diagnostic calibration.</p>
+                    </div>
+                  </div>
+                  <button className="restore-btn" onClick={restoreCNC02}>
+                    <Check size={13} /> Restore Standard Lines
+                  </button>
+                </div>
+              )}
+
+              <div className="panel-heading schedule-subheading">
+                <div><h3>Machine schedule</h3><p>Production timeline with live execution playhead</p></div>
+                <div className="legend">
+                  <span><i className="dot blue" /> Gear assembly</span>
+                  <span><i className="dot coral" /> Shaft machining</span>
+                  <span><i className="dot green" /> Bracket finishing</span>
+                  <span><i className="dot amber" /> Inspection</span>
+                  {healingState === "healed" && <span><i className="dot purple" /> ⚡ Reassigned to Completed Machine</span>}
+                </div>
+              </div>
+
+              <div className="gantt-scroll">
+                <div className="gantt live-gantt">
+                  {/* Vertical Live Laser Playhead Scanner */}
+                  <div
+                    className="live-playhead"
+                    style={{ left: `calc(67px + (100% - 72px) * ${simProgress / 100})` }}
+                  >
+                    <div className="playhead-tag">
+                      <span className="playhead-dot" />
+                      <span>{formatSimClock(simProgress)}</span>
+                    </div>
+                    <div className="playhead-line" />
+                  </div>
+
+                  {/* Auto-Breakdown trigger marker line if enabled */}
+                  {autoBreakdown && (
+                    <div
+                      className="auto-fault-marker"
+                      style={{ left: `calc(67px + (100% - 72px) * 0.52)` }}
+                      title="Automatic Breakdown Trigger Point (52% / 12:10 PM)"
+                    >
+                      <span className="fault-marker-tag">⚡ Auto-Breakdown (12:10)</span>
+                    </div>
+                  )}
+
+                  <div className="time-axis">
+                    <span>Machine</span>
+                    {["08:00","09:00","10:00","11:00","12:00","13:00","14:00","15:00"].map(t => (
+                      <span key={t} onClick={() => {
+                        const parts = t.split(":");
+                        const hour = parseInt(parts[0], 10);
+                        const pct = ((hour - 8) / 8) * 100;
+                        setSimProgress(pct);
+                      }} title={`Jump to ${t}`}>
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+
+                  {scheduleRows.map((row, idx) => {
+                    const isBrokenRow = breakdown && row.machine === "CNC-02" && healingState === "idle";
+                    const isHealingRow = breakdown && row.machine === "CNC-02" && healingState === "healed";
+                    const isAssistingRow = breakdown && row.machine === "DRILL-03" && healingState === "healed";
+                    const isCompletedEarlyRow = row.machine === "DRILL-03" && simProgress >= 53 && !isAssistingRow;
+
+                    return (
+                      <div
+                        className={`machine-row ${isBrokenRow ? "machine-broken-hazard" : ""} ${isAssistingRow ? "machine-assisting-row" : ""} ${isCompletedEarlyRow ? "machine-completed-row" : ""}`}
+                        key={row.machine}
+                      >
+                        <div className="machine-label">
+                          {row.machine}
+                          <small>
+                            {isAssistingRow
+                              ? "⚡ Absorbing Work"
+                              : isHealingRow
+                              ? "Calibrating"
+                              : isCompletedEarlyRow
+                              ? "✅ Work Done Early"
+                              : idx === 0
+                              ? "Milling"
+                              : idx === 1
+                              ? "Turning"
+                              : idx === 2
+                              ? "Drilling"
+                              : idx === 3
+                              ? "Grinding"
+                              : "Finishing"}
+                          </small>
+                        </div>
+                        <div className="timeline-track">
+                          {row.tasks.map((task, i) => {
+                            const isRunning = simProgress >= task.left && simProgress <= (task.left + task.width);
+                            const isDone = simProgress > (task.left + task.width);
+                            const taskPct = isRunning ? Math.round(((simProgress - task.left) / task.width) * 100) : isDone ? 100 : 0;
+
+                            return (
+                              <div
+                                key={i}
+                                className={`task task-${task.tone} ${isRunning ? "task-active-running" : ""} ${isDone ? "task-completed" : ""} ${task.isRerouted ? "task-rerouted" : ""} ${task.isTransferred ? "task-transferred" : ""} ${task.isFailed ? "task-failed-hazard" : ""}`}
+                                style={{ left: `${task.left}%`, width: `${task.width}%` }}
+                                title={`${task.label} · ${task.isFailed ? "FAILED (Spindle Jam)" : isDone ? "Completed" : isRunning ? `Running (${taskPct}%)` : "Queued"}`}
+                              >
+                                {isDone && <span className="task-done-badge">✓</span>}
+                                {isRunning && <span className="task-live-pulse" />}
+                                <span className="task-text">{task.label}</span>
+                                {isRunning && <span className="task-pct-tag">{taskPct}%</span>}
+                              </div>
+                            );
+                          })}
+                          {isBrokenRow && (
+                            <div className="broken-label-hazard">
+                              <span className="hazard-stripes" />
+                              <strong>🚨 LIVE BREAKDOWN · NEEDY MACHINE (PAUSED)</strong>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="progress-meta">
+                <span>Shift progress (Shift A)</span>
+                <strong>{Math.round(simProgress)}% complete · {formatSimClock(simProgress)}</strong>
+              </div>
+              <div className="progress-track">
+                <span style={{ width: `${Math.round(simProgress)}%` }} />
+              </div>
+
+              {(rush || materialDelay || breakdown) && (
+                <div className="schedule-alert">
+                  <ShieldAlert size={16} />
+                  <span>
+                    <strong>Schedule update:</strong>{" "}
+                    {breakdown && healingState === "idle"
+                      ? "CNC-02 broken down; click 'Reassign Needy Work' to transfer jobs to completed machine DRILL-03."
+                      : breakdown && healingState === "healed"
+                      ? "Completed machine DRILL-03 has absorbed CNC-02's shaft operations. Zero factory delay."
+                      : rush
+                      ? "Urgent order added to the production queue."
+                      : "Material-dependent shaft operations are on hold."}
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="panel machine-panel" id="machines">
-              <div className="panel-heading"><div><h3>Machine health</h3><p>Virtual machine status</p></div><span className="online-count"><i /> {breakdown ? "7" : "8"} of 9 online</span></div>
+              <div className="panel-heading">
+                <div>
+                  <h3>Machine health</h3>
+                  <p>Virtual machine status &amp; live time estimation</p>
+                </div>
+                <span className="online-count"><i /> {breakdown && healingState === "idle" ? "7" : "8"} of 9 online</span>
+              </div>
+
               <div className="machine-list">
-                {machines.map((m, i) => {
+                {machines.map((m) => {
                   const down = breakdown && m.id === "CNC-02";
                   const idle = m.tone === "amber" && !down;
-                  return <div className="machine-card" key={m.id}>
-                    <img src={`https://images.unsplash.com/${m.image}?auto=format&fit=crop&w=140&q=75`} alt={m.name} />
-                    <div className="machine-copy"><strong>{m.name} <small>{m.id}</small></strong><p>{down ? "Maintenance required · rerouting jobs" : m.detail}</p></div>
-                    <span className={`status-pill ${down ? "down" : idle ? "idle" : "running"}`}>{down ? "Breakdown" : m.status}</span>
-                  </div>;
+                  const isAssisting = breakdown && m.id === "DRILL-03" && healingState === "healed";
+                  const isHealing = breakdown && m.id === "CNC-02" && healingState === "healed";
+                  const isCompletedEarly = m.id === "DRILL-03" && simProgress >= 53 && !isAssisting;
+
+                  const etc = getMachineETC(m.id, simProgress, breakdown, healingState);
+
+                  return (
+                    <div
+                      className={`machine-card clickable-machine-card ${down && healingState === "idle" ? "broken-card-hazard" : ""} ${isAssisting ? "assisting-card-glow" : ""} ${isCompletedEarly ? "completed-card-highlight" : ""}`}
+                      key={m.id}
+                      onClick={() => {
+                        setSelectedMachine(m.name);
+                        setMachineHealthOpen(true);
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setSelectedMachine(m.name);
+                          setMachineHealthOpen(true);
+                        }
+                      }}
+                      title={`Click to open ${m.name} PowerBI Dashboard`}
+                    >
+                      <div className="machine-card-top-bar">
+                        <img src={`https://images.unsplash.com/${m.image}?auto=format&fit=crop&w=140&q=75`} alt={m.name} />
+                        <div className="machine-copy">
+                          <div className="machine-card-title-row">
+                            <strong>{m.name} <small>{m.id}</small></strong>
+                            <span className="machine-view-tag">Dashboard →</span>
+                          </div>
+                          <p>
+                            {down && healingState === "idle"
+                              ? "🚨 Critical failure: Spindle Motor Overheated (Needy Machine)"
+                              : isHealing
+                              ? "🔧 Calibrating diagnostics · Work transferred to DRILL-03"
+                              : isAssisting
+                              ? "⚡ Absorbed CNC-02 needy workload (Finished shift early)"
+                              : isCompletedEarly
+                              ? "✅ 100% of shift work completed early · Free capacity"
+                              : m.detail}
+                          </p>
+                        </div>
+                        <span
+                          className={`status-pill ${
+                            down && healingState === "idle"
+                              ? "down"
+                              : isHealing
+                              ? "healing-pill"
+                              : isAssisting
+                              ? "assisting-pill"
+                              : isCompletedEarly
+                              ? "completed-pill"
+                              : idle
+                              ? "idle"
+                              : "running"
+                          }`}
+                        >
+                          {down && healingState === "idle"
+                            ? "Breakdown"
+                            : isHealing
+                            ? "Auto-Healing"
+                            : isAssisting
+                            ? "Assisting"
+                            : isCompletedEarly
+                            ? "Completed"
+                            : m.status}
+                        </span>
+                      </div>
+
+                      {/* Live Dynamic Time Estimation of Completion (ETC) */}
+                      <div className="machine-live-etc-box">
+                        <div className="etc-data-row">
+                          <span className="etc-chip-label">
+                            <Timer size={10} className="etc-icon" />
+                            {etc.isPaused ? "ETA Status" : "Est. Completion"}
+                          </span>
+                          <strong className={`etc-countdown ${etc.isPaused ? "paused-red" : isAssisting ? "assisting-purple" : isCompletedEarly ? "completed-green" : ""}`}>
+                            {etc.remainingStr}
+                          </strong>
+                        </div>
+                        <div className="etc-track">
+                          <div
+                            className={`etc-fill ${etc.isPaused ? "paused" : isAssisting ? "assisting" : isHealing ? "healing" : isCompletedEarly ? "completed" : ""}`}
+                            style={{ width: `${etc.percent}%` }}
+                          />
+                        </div>
+                        <div className="etc-meta-row">
+                          <span>Target: {etc.targetTime}</span>
+                          <span className="etc-note">{etc.note}</span>
+                        </div>
+                      </div>
+
+                      {/* Interactive Rehealing / Restore Buttons */}
+                      {down && healingState === "idle" && (
+                        <div className="card-broken-action" onClick={(e) => e.stopPropagation()} style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                          <button
+                            className="card-alert-dispatch-btn"
+                            onClick={() => dispatchBreakdownAlert("manual")}
+                            title="Broadcast live Breakdown Trigger Notification via WhatsApp & SMS"
+                          >
+                            <Send size={11} /> Breakdown Trigger Notification
+                          </button>
+                          <button className="card-reheal-btn pulse-glow" onClick={triggerReheal}>
+                            <Sparkles size={12} /> Reassign to Completed Machine (DRILL-03)
+                          </button>
+                        </div>
+                      )}
+
+                      {isHealing && (
+                        <div className="card-broken-action" onClick={(e) => e.stopPropagation()}>
+                          <button className="card-restore-btn" onClick={restoreCNC02}>
+                            <Check size={12} /> Restore Original Configuration
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
                 })}
               </div>
-              <div className="sync-note"><Zap size={16} /><span><strong>Digital Twin sync</strong><br />Virtual machine states update as you simulate an event. This demo uses illustrative data, not live sensors.</span></div>
+              <div className="sync-note">
+                <Zap size={16} />
+                <span>
+                  <strong>Digital Twin Self-Healing Engine</strong><br />
+                  Workload automatically shifts to backup machines during equipment failure to keep schedules on target.
+                </span>
+              </div>
             </div>
           </div>
 
@@ -245,11 +928,35 @@ function App() {
               })}</div>
             </div>
             <div className="panel disruption-panel">
-              <div className="panel-heading"><div><h3>Simulate a disruption</h3><p>Test how the Digital Twin responds</p></div><span className="test-badge">TEST MODE</span></div>
+              <div className="panel-heading"><div><h3>Simulate a disruption</h3><p>Interactive backend control studios</p></div><span className="test-badge">BACKEND STUDIOS</span></div>
               <div className="disruption-actions">
-                <button className={`disruption-button ${breakdown ? "selected red-select" : ""}`} onClick={() => simulate("breakdown")}><span className="disruption-emoji">⚠️</span><strong>{breakdown ? "Restore CNC-02" : "Machine breakdown"}</strong><small>{breakdown ? "Clear event" : "Equipment failure"}</small></button>
-                <button className={`disruption-button ${rush ? "selected orange-select" : ""}`} onClick={() => simulate("rush")}><span className="disruption-emoji">🚘</span><strong>{rush ? "Remove rush order" : "Add rush order"}</strong><small>{rush ? "Clear event" : "Urgent customer job"}</small></button>
-                <button className={`disruption-button ${materialDelay ? "selected amber-select" : ""}`} onClick={() => simulate("material")}><span className="disruption-emoji">📦</span><strong>{materialDelay ? "Receive material" : "Material delay"}</strong><small>{materialDelay ? "Clear event" : "Supply disruption"}</small></button>
+                <button
+                  className={`disruption-button ${breakdown ? "selected red-select" : ""}`}
+                  onClick={() => setActiveDisruptionModal("breakdown")}
+                  title="Open Machine Breakdown & Telemetry Backend"
+                >
+                  <span className="disruption-emoji">⚠️</span>
+                  <strong>{breakdown ? "CNC-02 Breakdown Active" : "Machine breakdown"}</strong>
+                  <small>{breakdown ? "Configure / Self-Heal →" : "Telemetry Backend →"}</small>
+                </button>
+                <button
+                  className={`disruption-button ${rush ? "selected orange-select" : ""}`}
+                  onClick={() => setActiveDisruptionModal("rush")}
+                  title="Open New Order Workflow (Pipeline Structure + FIFO Algorithm)"
+                >
+                  <span className="disruption-emoji">🚘</span>
+                  <strong>{rush ? "Rush Order Active (FIFO)" : "Add rush order"}</strong>
+                  <small>New Order Pipeline (FIFO) →</small>
+                </button>
+                <button
+                  className={`disruption-button ${materialDelay ? "selected amber-select" : ""}`}
+                  onClick={() => setActiveDisruptionModal("material")}
+                  title="Open Material Delay & Inventory Buffer Backend"
+                >
+                  <span className="disruption-emoji">📦</span>
+                  <strong>{materialDelay ? "Material Delay Active" : "Material delay"}</strong>
+                  <small>{materialDelay ? "Resolve Delivery →" : "Supply Chain Backend →"}</small>
+                </button>
               </div>
               <div className="simulation-note"><span className="note-icon"><CircleHelp size={16} /></span><p>{notice}</p></div>
               <button className="button button-dark full-button" onClick={() => { setModal(true); }}>How the Digital Twin works <ArrowRight size={15} /></button>
@@ -258,6 +965,38 @@ function App() {
         </section>
       </main>
 
+      {machineHealthOpen && (
+        <div className="mhd-overlay">
+          <button className="mhd-overlay-close" onClick={() => { setMachineHealthOpen(false); setSelectedMachine(null); }} aria-label="Close Machine Health dashboard">✕ Close</button>
+          <MachineDashboard initialMachine={selectedMachine} />
+        </div>
+      )}
+
+      {activeDisruptionModal && (
+        <DisruptionModal
+          activeModal={activeDisruptionModal}
+          onClose={() => setActiveDisruptionModal(null)}
+          breakdown={breakdown}
+          healingState={healingState}
+          triggerManualBreakdown={toggleManualBreakdown}
+          triggerReheal={triggerReheal}
+          restoreCNC02={restoreCNC02}
+          rush={rush}
+          setRush={setRush}
+          materialDelay={materialDelay}
+          setMaterialDelay={setMaterialDelay}
+          addEvent={addEvent}
+          notify={notify}
+          setNotice={setNotice}
+          onDispatchTwilioAlert={dispatchBreakdownAlert}
+        />
+      )}
+
+      <TwilioModal
+        isOpen={twilioModalOpen}
+        onClose={() => setTwilioModalOpen(false)}
+        onAlertDispatched={() => setTwilioLogsCount(getTwilioLogs().length)}
+      />
       <footer className="footer"><a className="brand footer-brand" href="#top"><span className="brand-mark"><Factory size={16} /></span><span>flexi<span className="brand-accent">Scheduler</span></span></a><span>Digital Twin for Automobile Parts Manufacturing</span><span className="footer-tag"><span /> Simulation prototype · 2026</span></footer>
 
       {modal && <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setModal(false); }}><div className="modal">
