@@ -3,6 +3,7 @@ import MachineDashboard from "./MachineDashboard";
 import DisruptionModal from "./DisruptionModals";
 import TwilioModal from "./TwilioModal";
 import LiveMonitoringWidget from "./LiveMonitoringWidget";
+import ReportAnalysisAiSection from "./ReportAnalysisAiSection";
 import { sendTwilioNotification, getTwilioLogs } from "./TwilioService";
 import { updateMachineInDb } from "./supabaseClient";
 import {
@@ -376,21 +377,9 @@ function App() {
           <button className="nav-link" onClick={() => { setDashboardTab("alerts"); scrollTo("dashboard"); }}>Alerts</button>
           <button className="nav-link" onClick={() => { setDashboardTab("inventory"); scrollTo("dashboard"); }}>Inventory</button>
           <button className="nav-link" onClick={() => scrollTo("events")}>Disruptions</button>
-          <div className="nav-dropdown-wrap" onMouseEnter={() => setHealthDropdown(true)} onMouseLeave={() => setHealthDropdown(false)}>
-            <button className={`nav-link nav-link-health ${healthDropdown ? "active" : ""}`}>
-              ⚙ Machine Health <span className="nav-chevron">{healthDropdown ? "▲" : "▼"}</span>
-            </button>
-            {healthDropdown && (
-              <div className="nav-dropdown">
-                <div className="nav-dropdown-label">SELECT MACHINE</div>
-                {["CNC Milling","CNC Turning","Drilling","Grinding"].map(name => (
-                  <button key={name} className="nav-dropdown-item" onClick={() => openMachine(name)}>
-                    <span className="nav-dropdown-dot" />{name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <button className="nav-link nav-link-ai" onClick={() => scrollTo("analytics")}>
+            📊 Report &amp; AI Prediction
+          </button>
         </nav>
         <div className="nav-actions">
           <button
@@ -962,6 +951,8 @@ function App() {
             </div>
           </div>
         </section>
+
+        <ReportAnalysisAiSection onRehealWorkload={triggerReheal} />
       </main>
 
       {machineHealthOpen && (
