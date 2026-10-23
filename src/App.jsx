@@ -60,7 +60,31 @@ function App() {
 
   // Sync with Supabase Auth in case of OAuth redirect
   useEffect(() => {
-    if (isSupabaseConfigured && supabase?.auth?.onAuthStateChange) {
+    if (isSupabaseConfigured && supabase?.auth) {
+      // Check existing session on mount
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user) {
+          const userMeta = session.user.user_metadata || {};
+          const fullUser = {
+            id: session.user.id,
+            name: userMeta.full_name || userMeta.name || session.user.email?.split("@")[0] || "Google User",
+            email: session.user.email,
+            provider: "Google OAuth",
+            role: "Plant Supervisor",
+            avatar: userMeta.avatar_url || userMeta.picture || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80"
+          };
+          setCurrentUser(fullUser);
+          try {
+            localStorage.setItem("flexi_auth_user", JSON.stringify(fullUser));
+          } catch (e) {}
+
+          // Clean up hash fragment from URL
+          if (window.location.hash && window.location.hash.includes("access_token")) {
+            window.history.replaceState(null, "", window.location.pathname);
+          }
+        }
+      }).catch(err => console.warn("Supabase getSession warning:", err));
+
       const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
         if (session?.user) {
           const userMeta = session.user.user_metadata || {};
@@ -69,13 +93,17 @@ function App() {
             name: userMeta.full_name || userMeta.name || session.user.email?.split("@")[0] || "Google User",
             email: session.user.email,
             provider: "Google OAuth",
-            role: "Plant Systems Engineer",
+            role: "Plant Supervisor",
             avatar: userMeta.avatar_url || userMeta.picture || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80"
           };
           setCurrentUser(fullUser);
           try {
             localStorage.setItem("flexi_auth_user", JSON.stringify(fullUser));
           } catch (e) {}
+
+          if (window.location.hash && window.location.hash.includes("access_token")) {
+            window.history.replaceState(null, "", window.location.pathname);
+          }
         }
       });
       return () => {
