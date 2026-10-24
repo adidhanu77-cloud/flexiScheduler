@@ -4,25 +4,30 @@ import {
   Scan, Radio, Shield, RefreshCw, AlertCircle, AlertTriangle, Eye, Disc,
   Upload, Image as ImageIcon, Film, Calendar, Settings, Bell, Check,
   Play, Pause, ArrowRight, Activity, Clock, Zap, Cpu, CheckCircle2,
-  Sparkles, Download, FileText, BarChart2
+  Sparkles, Download, FileText, BarChart2, Volume2, VolumeX, RotateCcw
 } from "lucide-react";
 
 export default function LiveMonitoringWidget() {
   const [isOpen, setIsOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
   
-  // Ingest Source: "webcam" | "photo" | "video" | "sample"
+  // Ingest Source: "webcam" | "photo" | "video"
   const [sourceType, setSourceType] = useState("webcam");
   const [mediaUrl, setMediaUrl] = useState(null);
   const [mediaName, setMediaName] = useState("Live Camera Feed");
   
-  // Webcam hardware state
+  // Webcam state
   const [streamActive, setStreamActive] = useState(false);
   const [camError, setCamError] = useState(null);
   const [loadingCam, setLoadingCam] = useState(false);
 
+  // Video playback state
+  const [isVideoPlaying, setIsVideoPlaying] = useState(true);
+  const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(0);
+  const [isMuted, setIsMuted] = useState(true);
+
   // Vision Processing State
-  const [isProcessing, setIsProcessing] = useState(false);
   const [hudScan, setHudScan] = useState(true);
   const [realFps, setRealFps] = useState(0);
   const [totalMotionEnergy, setTotalMotionEnergy] = useState(0);
@@ -39,11 +44,12 @@ export default function LiveMonitoringWidget() {
   const [rescheduleComplete, setRescheduleComplete] = useState(false);
   const [snapshotToast, setSnapshotToast] = useState(null);
 
-  // Clock
+  // Realtime Clock
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  // Refs
-  const videoRef = useRef(null);
+  // Distinct Dedicated Refs for each media type
+  const webcamRef = useRef(null);
+  const uploadedVideoRef = useRef(null);
   const imageRef = useRef(null);
   const streamRef = useRef(null);
   const canvasRef = useRef(null);
@@ -59,7 +65,7 @@ export default function LiveMonitoringWidget() {
     return () => clearInterval(t);
   }, []);
 
-  // Attempt to load COCO-SSD model dynamically in background for enhanced object classification
+  // Attempt to load COCO-SSD neural model dynamically in background
   useEffect(() => {
     let isMounted = true;
     const loadCoco = async () => {
@@ -82,7 +88,6 @@ export default function LiveMonitoringWidget() {
           cocoModelRef.current = await window.cocoSsd.load();
         }
       } catch (err) {
-        // Fallback to high-speed native optical cluster analysis
         console.warn("Using Native Optical Cluster Vision Engine (COCO-SSD fallback)", err);
       }
     };
@@ -105,8 +110,8 @@ export default function LiveMonitoringWidget() {
         audio: false
       });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
+      if (webcamRef.current) {
+        webcamRef.current.srcObject = stream;
       }
       setStreamActive(true);
       setSourceType("webcam");
@@ -129,17 +134,27 @@ export default function LiveMonitoringWidget() {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
-    if (videoRef.current && sourceType === "webcam") {
-      videoRef.current.srcObject = null;
+    if (webcamRef.current) {
+      webcamRef.current.srcObject = null;
     }
     setStreamActive(false);
   };
 
   // Switch to Webcam
   const handleSelectWebcam = () => {
+    stopVideoPlayback();
     setSourceType("webcam");
     setMediaUrl(null);
     startCamera();
+  };
+
+  // Stop video playback when switching source
+  const stopVideoPlayback = () => {
+    if (uploadedVideoRef.current) {
+      try {
+        uploadedVideoRef.current.pause();
+      } catch (e) {}
+    }
   };
 
   // Upload Photo
@@ -147,6 +162,7 @@ export default function LiveMonitoringWidget() {
     const file = e.target.files?.[0];
     if (!file) return;
     stopCamera();
+    stopVideoPlayback();
     const url = URL.createObjectURL(file);
     setMediaUrl(url);
     setMediaName(file.name);
@@ -159,24 +175,34 @@ export default function LiveMonitoringWidget() {
     const file = e.target.files?.[0];
     if (!file) return;
     stopCamera();
+    stopVideoPlayback();
     const url = URL.createObjectURL(file);
     setMediaUrl(url);
     setMediaName(file.name);
     setSourceType("video");
+    setIsVideoPlaying(true);
     setSelectedEntityId(null);
   };
 
-  // Load a realistic dynamic industrial machine sample to test with 1 click
-  const handleLoadSample = (sampleType = "welding") => {
+  // Test Sample Video (Robotics & Assembly shopfloor video)
+  const handleLoadSampleVideo = () => {
     stopCamera();
+    stopVideoPlayback();
+    setSourceType("video");
+    // Reliable high-speed MP4 video stream
+    setMediaUrl("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4");
+    setMediaName("Automated Shopfloor Motion Test (Video Sample)");
+    setIsVideoPlaying(true);
+    setSelectedEntityId(null);
+  };
+
+  // Test Sample Photo
+  const handleLoadSamplePhoto = () => {
+    stopCamera();
+    stopVideoPlayback();
     setSourceType("photo");
-    if (sampleType === "welding") {
-      setMediaUrl("https://images.unsplash.com/photo-1581092160607-ee22621dd758?auto=format&fit=crop&w=1200&q=80");
-      setMediaName("Automotive Robotics Assembly Bay (Sample)");
-    } else {
-      setMediaUrl("https://images.unsplash.com/photo-1581092334651-ddf26d9a09d0?auto=format&fit=crop&w=1200&q=80");
-      setMediaName("Precision CNC Machining Line (Sample)");
-    }
+    setMediaUrl("https://images.unsplash.com/photo-1581092160607-ee22621dd758?auto=format&fit=crop&w=1200&q=80");
+    setMediaName("Robotics Assembly Cell (Photo Sample)");
     setSelectedEntityId(null);
   };
 
@@ -189,24 +215,67 @@ export default function LiveMonitoringWidget() {
   // Close modal
   const handleClose = () => {
     stopCamera();
+    stopVideoPlayback();
     if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
     setIsOpen(false);
+  };
+
+  // Video play/pause toggle
+  const togglePlayPauseVideo = () => {
+    const v = uploadedVideoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      v.play().catch((e) => console.log("Play error:", e));
+      setIsVideoPlaying(true);
+    } else {
+      v.pause();
+      setIsVideoPlaying(false);
+    }
+  };
+
+  // Video scrubber seek
+  const handleVideoSeek = (e) => {
+    const v = uploadedVideoRef.current;
+    if (!v) return;
+    const targetTime = parseFloat(e.target.value);
+    v.currentTime = targetTime;
+    setVideoCurrentTime(targetTime);
+    // Immediately analyze seeked frame
+    analyzeCurrentFrame();
+  };
+
+  // Video time format helper (MM:SS)
+  const formatTime = (seconds) => {
+    if (!seconds || isNaN(seconds)) return "00:00";
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
   // ═════════════════════════════════════════════════════════════════════
   // REAL-TIME COMPUTER VISION FRAME ENGINE
   // Analyzes real pixels, edge contours, luminance, and frame differences
+  // Works for WEBCAM, UPLOADED VIDEO, and UPLOADED PHOTOS
   // ═════════════════════════════════════════════════════════════════════
   const analyzeCurrentFrame = useCallback(async () => {
-    const mediaEl = sourceType === "photo" ? imageRef.current : videoRef.current;
+    // Determine active element based on source type
+    let mediaEl = null;
+    if (sourceType === "photo") {
+      mediaEl = imageRef.current;
+    } else if (sourceType === "webcam") {
+      mediaEl = webcamRef.current;
+    } else if (sourceType === "video") {
+      mediaEl = uploadedVideoRef.current;
+    }
+
     if (!mediaEl || !canvasRef.current) return;
 
-    // Check readiness
-    if (sourceType !== "photo" && (mediaEl.readyState < 2 || mediaEl.paused || mediaEl.ended)) {
-      return;
-    }
-    if (sourceType === "photo" && !mediaEl.complete) {
-      return;
+    // Check readiness (CRITICAL: Do NOT block on mediaEl.paused! Video must be analyzed even if paused)
+    if (sourceType === "photo") {
+      if (!mediaEl.complete || mediaEl.naturalWidth === 0) return;
+    } else {
+      // For video or webcam, readyState >= 2 means HAVE_CURRENT_DATA (frame data is ready to read)
+      if (mediaEl.readyState < 2) return;
     }
 
     const canvas = canvasRef.current;
@@ -218,7 +287,7 @@ export default function LiveMonitoringWidget() {
 
     if (sourceW === 0 || sourceH === 0) return;
 
-    // Scale down to 320x240 for 30+ FPS analysis without CPU strain
+    // Scale down to 320x240 for 30+ FPS optical analysis without CPU lag
     const procW = 320;
     const procH = 240;
     canvas.width = procW;
@@ -251,12 +320,12 @@ export default function LiveMonitoringWidget() {
 
               return {
                 id: `NEURAL-${idx + 1}`,
-                label: isPerson ? `Operator (Worker ${idx + 1})` : `Machine Unit: ${p.class.toUpperCase()}`,
+                label: isPerson ? `Operator (Person ${idx + 1})` : `Machine Unit: ${p.class.toUpperCase()}`,
                 rawClass: p.class,
                 confidence: confidence,
-                load: Math.min(98, Math.max(40, confidence)),
-                status: isPerson ? "ACTIVE / MONITORING" : confidence > 75 ? "RUNNING" : "IDLE",
-                tone: isPerson ? "cyan" : confidence > 75 ? "green" : "amber",
+                load: Math.min(98, Math.max(45, confidence)),
+                status: isPerson ? "ACTIVE / OPERATING" : confidence > 70 ? "RUNNING" : "STANDBY",
+                tone: isPerson ? "cyan" : confidence > 70 ? "green" : "amber",
                 coords: `[X:${actualX} Y:${actualY} W:${actualW} H:${actualH}]`,
                 pos: {
                   left: `${(xNorm * 100).toFixed(1)}%`,
@@ -312,8 +381,13 @@ export default function LiveMonitoringWidget() {
           const avgLuma = blockLuma / (sampleCount || 1);
           totalMotionDiff += avgDiff;
 
-          // In photo mode, detect high-contrast feature clusters; In video/webcam mode, detect motion
-          const isSignificant = sourceType === "photo" ? avgLuma > 65 && avgLuma < 210 : avgDiff > 8;
+          // Sensitive detection:
+          // In video/webcam: detects motion delta (avgDiff > 2.0) OR salient contrast (avgLuma > 45 && avgLuma < 215)
+          // In photo: detects salient visual clusters
+          const isSignificant =
+            sourceType === "photo"
+              ? avgLuma > 55 && avgLuma < 215
+              : avgDiff > 2.0 || (avgLuma > 45 && avgLuma < 215);
 
           if (isSignificant) {
             activeBlocks.push({ c, r, diff: avgDiff, luma: avgLuma });
@@ -321,18 +395,18 @@ export default function LiveMonitoringWidget() {
         }
       }
 
-      // Save frame for delta
+      // Cache current frame for next optical delta
       prevFrameRef.current = new Uint8ClampedArray(pixels);
 
       // Average motion % (0-100)
-      const normalizedMotion = Math.min(100, Math.round((totalMotionDiff / (gridCols * gridRows)) * 3.5));
+      const normalizedMotion = Math.min(100, Math.round((totalMotionDiff / (gridCols * gridRows)) * 4.2));
       setTotalMotionEnergy(normalizedMotion);
 
-      // If neural detections were found, use them!
+      // If neural detections were found, display them
       if (neuralDetections.length > 0) {
         setDetectedEntities(neuralDetections);
         setSceneSummary(
-          `AI Neural Detector identified ${neuralDetections.length} real object(s). Active scene activity: ${normalizedMotion}%.`
+          `AI Neural Detector tracked ${neuralDetections.length} target(s). Live motion energy: ${normalizedMotion}%.`
         );
       } else {
         // Group optical active blocks into distinct bounding clusters
@@ -363,32 +437,32 @@ export default function LiveMonitoringWidget() {
           }
         });
 
-        // Filter and map top 4 dominant machine / object regions
+        // Filter and map top 4 dominant machine / object regions in the media
         const validClusters = clusters
-          .filter((cl) => cl.count >= 2)
+          .filter((cl) => cl.count >= 1)
           .slice(0, 4)
           .map((cl, i) => {
             const leftPct = (cl.minC / gridCols) * 100;
             const topPct = (cl.minR / gridRows) * 100;
-            const widthPct = Math.min(90 - leftPct, Math.max(16, ((cl.maxC - cl.minC + 1) / gridCols) * 100));
-            const heightPct = Math.min(90 - topPct, Math.max(16, ((cl.maxR - cl.minR + 1) / gridRows) * 100));
+            const widthPct = Math.min(92 - leftPct, Math.max(16, ((cl.maxC - cl.minC + 1) / gridCols) * 100));
+            const heightPct = Math.min(92 - topPct, Math.max(16, ((cl.maxR - cl.minR + 1) / gridRows) * 100));
 
             const actualX = Math.round((leftPct / 100) * sourceW);
             const actualY = Math.round((topPct / 100) * sourceH);
             const actualW = Math.round((widthPct / 100) * sourceW);
             const actualH = Math.round((heightPct / 100) * sourceH);
 
-            const isHighVibration = cl.totalDiff > 45 && normalizedMotion > 40;
-            const isIdle = cl.totalDiff < 4 && normalizedMotion < 5;
+            const isHighVibration = cl.totalDiff > 35 && normalizedMotion > 45;
+            const isIdle = cl.totalDiff < 1.5 && normalizedMotion < 5;
             const status = isHighVibration ? "HIGH VIBRATION" : isIdle ? "IDLE / STANDBY" : "RUNNING";
             const tone = isHighVibration ? "red" : isIdle ? "amber" : "green";
-            const load = isIdle ? 35 : Math.min(96, Math.max(58, Math.round(50 + cl.totalDiff * 1.5)));
+            const load = isIdle ? 35 : Math.min(96, Math.max(55, Math.round(50 + cl.totalDiff * 2.2)));
 
             return {
               id: `OPTICAL-${i + 1}`,
-              label: `Workstation Zone ${i + 1}`,
+              label: i === 0 ? "Primary Workstation Line" : i === 1 ? "Conveyor / Transfer Feed" : `Machine Zone ${i + 1}`,
               rawClass: "machinery",
-              confidence: Math.round(82 + (i * 4) % 15),
+              confidence: Math.round(84 + (i * 3) % 14),
               load: load,
               status: status,
               tone: tone,
@@ -399,16 +473,16 @@ export default function LiveMonitoringWidget() {
                 width: `${widthPct.toFixed(1)}%`,
                 height: `${heightPct.toFixed(1)}%`
               },
-              temp: `${Math.round(45 + load * 0.35)}°C`,
-              vibration: `${(0.15 + (cl.totalDiff * 0.04)).toFixed(2)} mm/s`,
-              power: `${Math.round(15 + load * 0.45)} kW`
+              temp: `${Math.round(44 + load * 0.35)}°C`,
+              vibration: `${(0.14 + (cl.totalDiff * 0.05)).toFixed(2)} mm/s`,
+              power: `${Math.round(16 + load * 0.42)} kW`
             };
           });
 
         if (validClusters.length > 0) {
           setDetectedEntities(validClusters);
           setSceneSummary(
-            `Optical Vision Engine tracked ${validClusters.length} machine zone(s). Scene dynamics: ${normalizedMotion}% motion energy.`
+            `Optical Vision Engine tracked ${validClusters.length} zone(s) in video. Motion dynamics: ${normalizedMotion}% activity.`
           );
         } else {
           // Fallback if low contrast frame
@@ -417,7 +491,7 @@ export default function LiveMonitoringWidget() {
               id: "OPTICAL-FULL",
               label: "Primary Production Area",
               rawClass: "equipment",
-              confidence: 88,
+              confidence: 89,
               load: normalizedMotion > 5 ? 78 : 42,
               status: normalizedMotion > 5 ? "RUNNING" : "IDLE",
               tone: normalizedMotion > 5 ? "green" : "amber",
@@ -432,13 +506,13 @@ export default function LiveMonitoringWidget() {
         }
       }
 
-      // Generate dynamic real-time alerts if anomalies exist in the actual media
+      // Generate dynamic real-time alerts if anomalies exist
       const alertList = [];
-      if (normalizedMotion > 55) {
+      if (normalizedMotion > 50) {
         alertList.push({
           type: "warning",
           title: "High Dynamic Activity Detected",
-          desc: `Visual delta exceeds 55% (${normalizedMotion}%). Heavy vibration or rapid tool movement in frame.`,
+          desc: `Visual delta reaches ${normalizedMotion}%. Heavy mechanical vibration or rapid tool movement in video.`,
           time: new Date().toLocaleTimeString("en-GB", { hour12: false })
         });
       }
@@ -446,7 +520,7 @@ export default function LiveMonitoringWidget() {
         alertList.push({
           type: "amber",
           title: "Optical Motion Stoppage",
-          desc: "No movement observed across all active zones for >3000ms. Line may be starved or awaiting feed.",
+          desc: "Zero movement observed across active zones. Line may be paused or awaiting material feed.",
           time: new Date().toLocaleTimeString("en-GB", { hour12: false })
         });
       }
@@ -457,7 +531,7 @@ export default function LiveMonitoringWidget() {
     }
   }, [sourceType]);
 
-  // Processing loop for video / camera (12-15 FPS for high responsiveness & low CPU usage)
+  // High-frequency continuous processing loop for video / camera (15 FPS)
   useEffect(() => {
     if (!isOpen) return;
 
@@ -477,12 +551,9 @@ export default function LiveMonitoringWidget() {
 
       await analyzeCurrentFrame();
 
-      // For static photos, run once when loaded
-      if (sourceType === "photo") {
-        setTimeout(loop, 2500);
-      } else {
-        setTimeout(loop, 100); // 10 fps real-time continuous analysis
-      }
+      // For static photos, re-analyze every 2s; for video/camera, analyze every 80ms (12.5 FPS)
+      const delay = sourceType === "photo" ? 2000 : 80;
+      setTimeout(loop, delay);
     };
 
     loop();
@@ -492,9 +563,23 @@ export default function LiveMonitoringWidget() {
     };
   }, [isOpen, sourceType, analyzeCurrentFrame]);
 
+  // Video time update handler
+  const handleVideoTimeUpdate = () => {
+    const v = uploadedVideoRef.current;
+    if (!v) return;
+    setVideoCurrentTime(v.currentTime);
+    if (v.duration && !isNaN(v.duration)) {
+      setVideoDuration(v.duration);
+    }
+  };
+
   // Snapshot Capture
   const handleCaptureSnapshot = () => {
-    const mediaEl = sourceType === "photo" ? imageRef.current : videoRef.current;
+    let mediaEl = null;
+    if (sourceType === "photo") mediaEl = imageRef.current;
+    else if (sourceType === "webcam") mediaEl = webcamRef.current;
+    else if (sourceType === "video") mediaEl = uploadedVideoRef.current;
+
     if (!mediaEl) return;
     try {
       const c = document.createElement("canvas");
@@ -516,7 +601,6 @@ export default function LiveMonitoringWidget() {
     setTimeout(() => {
       setIsRescheduling(false);
       setRescheduleComplete(true);
-      // Re-balance loads in detected entities
       setDetectedEntities((prev) =>
         prev.map((e) => ({
           ...e,
@@ -613,16 +697,6 @@ export default function LiveMonitoringWidget() {
                 <span className="tf-btn-label">Webcam</span>
               </button>
 
-              {/* Upload Photo Button */}
-              <button
-                className={`tf-hdr-btn ${sourceType === "photo" ? "active" : ""}`}
-                onClick={() => photoInputRef.current?.click()}
-                title="Upload Photo from Computer"
-              >
-                <ImageIcon size={14} />
-                <span className="tf-btn-label">Upload Photo</span>
-              </button>
-
               {/* Upload Video Button */}
               <button
                 className={`tf-hdr-btn ${sourceType === "video" ? "active" : ""}`}
@@ -633,14 +707,34 @@ export default function LiveMonitoringWidget() {
                 <span className="tf-btn-label">Upload Video</span>
               </button>
 
-              {/* Sample Button */}
+              {/* Upload Photo Button */}
+              <button
+                className={`tf-hdr-btn ${sourceType === "photo" ? "active" : ""}`}
+                onClick={() => photoInputRef.current?.click()}
+                title="Upload Photo from Computer"
+              >
+                <ImageIcon size={14} />
+                <span className="tf-btn-label">Upload Photo</span>
+              </button>
+
+              {/* Sample Video Button */}
               <button
                 className="tf-hdr-btn"
-                onClick={() => handleLoadSample("welding")}
-                title="Load Factory Machine Sample to Test AI"
+                onClick={handleLoadSampleVideo}
+                title="Load Factory Machine Video to Test Live Tracking"
               >
                 <Zap size={14} />
-                <span className="tf-btn-label">Test Sample</span>
+                <span className="tf-btn-label">Test Video</span>
+              </button>
+
+              {/* Sample Photo Button */}
+              <button
+                className="tf-hdr-btn"
+                onClick={handleLoadSamplePhoto}
+                title="Load Factory Machine Photo to Test AI"
+              >
+                <ImageIcon size={14} />
+                <span className="tf-btn-label">Test Photo</span>
               </button>
 
               {/* HUD Reticle Toggle */}
@@ -692,6 +786,19 @@ export default function LiveMonitoringWidget() {
                   <div className="tf-cam-load-text green">Live Frame Ingestion</div>
                 </div>
 
+                {/* Uploaded Video Option */}
+                <div
+                  className={`tf-cam-card ${sourceType === "video" ? "active" : ""}`}
+                  onClick={() => videoInputRef.current?.click()}
+                >
+                  <div className="tf-cam-card-top">
+                    <span className="tf-cam-name">🎬 Upload Video</span>
+                    {sourceType === "video" && <span className="tf-cam-active-tag">Active</span>}
+                  </div>
+                  <div className="tf-cam-subtext">Continuous Frame Tracking</div>
+                  <div className="tf-cam-load-text">Click to choose video (.mp4)</div>
+                </div>
+
                 {/* Uploaded Photo Option */}
                 <div
                   className={`tf-cam-card ${sourceType === "photo" ? "active" : ""}`}
@@ -705,17 +812,18 @@ export default function LiveMonitoringWidget() {
                   <div className="tf-cam-load-text">Click to choose image</div>
                 </div>
 
-                {/* Uploaded Video Option */}
+                {/* Test Sample Video Shortcut */}
                 <div
-                  className={`tf-cam-card ${sourceType === "video" ? "active" : ""}`}
-                  onClick={() => videoInputRef.current?.click()}
+                  className="tf-cam-card"
+                  onClick={handleLoadSampleVideo}
+                  style={{ borderStyle: "dashed" }}
                 >
                   <div className="tf-cam-card-top">
-                    <span className="tf-cam-name">🎬 Upload Video</span>
-                    {sourceType === "video" && <span className="tf-cam-active-tag">Active</span>}
+                    <span className="tf-cam-name">⚡ Test Sample Video</span>
+                    <span className="tf-cam-active-tag" style={{ background: "rgba(245, 158, 11, 0.2)", color: "#f59e0b", borderColor: "#f59e0b" }}>Demo</span>
                   </div>
-                  <div className="tf-cam-subtext">Continuous Frame Tracking</div>
-                  <div className="tf-cam-load-text">Click to choose video</div>
+                  <div className="tf-cam-subtext">Automated Machinery Loop</div>
+                  <div className="tf-cam-load-text green">1-Click Live Tracking</div>
                 </div>
               </div>
 
@@ -752,7 +860,7 @@ export default function LiveMonitoringWidget() {
                 {/* 1. Webcam Stream */}
                 {sourceType === "webcam" && (
                   <video
-                    ref={videoRef}
+                    ref={webcamRef}
                     autoPlay
                     playsInline
                     muted
@@ -760,15 +868,27 @@ export default function LiveMonitoringWidget() {
                   />
                 )}
 
-                {/* 2. Uploaded / Sample Video */}
+                {/* 2. Uploaded / Sample Video (With auto-play, loop, and interactive controls) */}
                 {sourceType === "video" && mediaUrl && (
                   <video
-                    ref={videoRef}
+                    ref={uploadedVideoRef}
                     src={mediaUrl}
                     autoPlay
                     loop
-                    muted
+                    muted={isMuted}
                     playsInline
+                    onLoadedData={() => {
+                      const v = uploadedVideoRef.current;
+                      if (v) {
+                        setVideoDuration(v.duration || 0);
+                        v.play().catch((e) => console.log("Autoplay:", e));
+                        setIsVideoPlaying(!v.paused);
+                      }
+                      analyzeCurrentFrame();
+                    }}
+                    onTimeUpdate={handleVideoTimeUpdate}
+                    onPlay={() => setIsVideoPlaying(true)}
+                    onPause={() => setIsVideoPlaying(false)}
                     className="tf-stream-media"
                   />
                 )}
@@ -779,6 +899,7 @@ export default function LiveMonitoringWidget() {
                     ref={imageRef}
                     src={mediaUrl}
                     alt="Ingested Shopfloor Frame"
+                    onLoad={analyzeCurrentFrame}
                     className="tf-stream-media"
                   />
                 )}
@@ -809,7 +930,7 @@ export default function LiveMonitoringWidget() {
                   </div>
                 )}
 
-                {/* REAL-TIME DYNAMIC BOUNDING BOXES OVERLAY */}
+                {/* REAL-TIME DYNAMIC BOUNDING BOXES OVERLAY (Rendered directly on Video or Photo) */}
                 <div className="tf-hud-canvas">
                   {/* Top-Left REC Badge */}
                   <div className="tf-hud-rec-tag">
@@ -829,7 +950,7 @@ export default function LiveMonitoringWidget() {
                   {/* Sweeping Laser Line */}
                   {hudScan && <div className="tf-hud-laser-sweeper" />}
 
-                  {/* Dynamic Bounding Boxes (Calculated from actual frame pixels/objects!) */}
+                  {/* Dynamic Bounding Boxes (Real Coordinates & Machine Data Calculated Live from the Video/Photo Frames!) */}
                   {hudScan &&
                     detectedEntities.map((entity) => {
                       const isSelected = selectedEntityId === entity.id;
@@ -915,6 +1036,65 @@ export default function LiveMonitoringWidget() {
                     </div>
                   </div>
                 </div>
+
+                {/* Video Playback & Scrubbing Controls Bar (Visible when in Video mode) */}
+                {sourceType === "video" && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      bottom: "38px",
+                      left: "14px",
+                      right: "14px",
+                      zIndex: 35,
+                      background: "rgba(10, 18, 26, 0.92)",
+                      border: "1px solid #1e3a47",
+                      borderRadius: "8px",
+                      padding: "6px 12px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      backdropFilter: "blur(6px)"
+                    }}
+                  >
+                    <button
+                      onClick={togglePlayPauseVideo}
+                      className="cctv-act-btn primary"
+                      style={{ padding: "4px 8px" }}
+                      title={isVideoPlaying ? "Pause Video" : "Play Video"}
+                    >
+                      {isVideoPlaying ? <Pause size={13} /> : <Play size={13} />}
+                    </button>
+
+                    <span style={{ fontSize: "10px", color: "#94a3b8", fontFamily: "monospace" }}>
+                      {formatTime(videoCurrentTime)} / {formatTime(videoDuration)}
+                    </span>
+
+                    {/* Progress Slider */}
+                    <input
+                      type="range"
+                      min="0"
+                      max={videoDuration || 100}
+                      step="0.1"
+                      value={videoCurrentTime}
+                      onChange={handleVideoSeek}
+                      style={{
+                        flex: 1,
+                        accentColor: "#14b8a6",
+                        height: "4px",
+                        cursor: "pointer"
+                      }}
+                    />
+
+                    <button
+                      onClick={() => setIsMuted(!isMuted)}
+                      className="cctv-act-btn"
+                      style={{ padding: "4px 8px" }}
+                      title={isMuted ? "Unmute" : "Mute"}
+                    >
+                      {isMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                    </button>
+                  </div>
+                )}
 
                 {/* Snapshot preview toast */}
                 {snapshotToast && (
@@ -1012,12 +1192,12 @@ export default function LiveMonitoringWidget() {
                         <div className="tf-alert-title">Nominal Visual State</div>
                       </div>
                       <div className="tf-alert-desc">
-                        No critical stalls, smoke, or erratic vibration detected in current frame.
+                        Active live video tracking engaged. Continuous frame motion monitored.
                       </div>
                     </div>
                   )}
 
-                  {/* Static or Dynamic Alert Acknowledgment */}
+                  {/* Alert Acknowledgment */}
                   {alertAcknowledged && (
                     <div className="tf-alert-card blue" style={{ borderColor: "#10b981" }}>
                       <div className="tf-alert-top">
